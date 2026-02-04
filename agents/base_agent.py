@@ -11,14 +11,15 @@ class BaseAgent(Player):
     """A simple agent that makes reasonable decisions but never calls Cambio.
 
     Strategy:
-    - Draw from discard if card value < 4, otherwise draw from deck
+    - Draw from discard if card value < discard_threshold, otherwise draw from deck
     - If drawn_card < max(known hand), swap with that max card
     - Result: hand keeps min(max(known hand), drawn_card)
     - Never call Cambio
     """
 
-    def __init__(self, name="BaseAgent"):
+    def __init__(self, name="BaseAgent", discard_threshold=4):
         super().__init__(name)
+        self.discard_threshold = discard_threshold
         self._last_discard_top = None
 
     def set_discard_top(self, card):
@@ -26,8 +27,8 @@ class BaseAgent(Player):
         self._last_discard_top = card
 
     def choose_draw(self):
-        """Draw from discard if value < 4, otherwise draw from deck."""
-        if self._last_discard_top and self._last_discard_top.get_value() < 4:
+        """Draw from discard if value < discard_threshold, otherwise draw from deck."""
+        if self._last_discard_top and self._last_discard_top.get_value() < self.discard_threshold:
             return 'discard'
         return 'deck'
 
