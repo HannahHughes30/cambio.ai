@@ -11,7 +11,16 @@ from game import Player
 
 class SmartAgent(Player):
 
+    """A smarter agent that makes smarter decisions and calls Cambio.
+        Right now most of it is the same as BaseAgent, but can call Cambio"""
 
+    """Strategy:
+    - Draw from discard if card value < discard_threshold, otherwise draw from deck
+    - If drawn_card < max(known hand), swap with that max card
+    - Use card powers to gain information and improve hand
+    - Call Cambio if expected hand value is at or below threshold, 
+        assuming unknown cards are between -1 and 10.
+    """
 
     def __init__(self, name="SmartAgent", discard_threshold=4):
         super().__init__(name)
