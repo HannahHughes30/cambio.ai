@@ -19,7 +19,7 @@ class TestSmartAgentInit:
         assert agent.name == "SmartAgent"
 
 class TestCallCambio:
-    def test_never_calls_cambio(self):
+    def test_calls_cambio(self):
         agent = SmartAgent()
         assert agent.call_cambio() is True
 

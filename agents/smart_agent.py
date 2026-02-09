@@ -68,7 +68,7 @@ class SmartAgent(Player):
         """
         total = 0
         for card in range(len(self.hand)):
-            # assume unknown cards have value is -1 to 10 with equal probability
+            # assume unknown cards have value -1 to 10 with equal probability
             expected_unknown = random.randint(-1, 10)
 
             if self.hand[card] != self.known.get(card):
