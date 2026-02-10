@@ -48,6 +48,12 @@ class Deck:
         if len(self.cards) > 0:
             return self.cards.pop()
         return None
+    
+    def size(self):
+        return len(self.cards)
+    
+    def is_empty(self):
+        return len(self.cards) == 0
 
 class Player:
     def __init__(self, name):
@@ -68,30 +74,28 @@ class Player:
         return False
     
     def use_card_power(self, card, game, opponent=None, my_pos=None, opp_pos=None):
-        """Use special card powers"""
-        
         if card.rank in ['7', '8']:
             if my_pos is not None and 0 <= my_pos < len(self.hand):
                 game.peek(self, my_pos)
-                print(f"  💡 {self.name} used {card} to peek at own position {my_pos}: {self.hand[my_pos]}")
+                print(f"  {self.name} used {card} to peek at own position {my_pos}: {self.hand[my_pos]}")
                 return True
         
         elif card.rank in ['9', '10']:
             if opponent and opp_pos is not None and 0 <= opp_pos < len(opponent.hand):
                 peeked = opponent.hand[opp_pos]
-                print(f"  👀 {self.name} used {card} to peek at {opponent.name}'s position {opp_pos}: {peeked}")
+                print(f"  {self.name} used {card} to peek at {opponent.name}'s position {opp_pos}: {peeked}")
                 return True
         
         elif card.rank in ['J', 'Q']:
             if opponent and my_pos is not None and opp_pos is not None:
                 game.swap(self, opponent, my_pos, opp_pos)
-                print(f"  🔄 {self.name} used {card} to blind swap position {my_pos} with {opponent.name}'s position {opp_pos}")
+                print(f"  {self.name} used {card} to blind swap position {my_pos} with {opponent.name}'s position {opp_pos}")
                 return True
         
         elif card.rank == 'K' and card.suit in ['Spades', 'Clubs']:
             if opponent and my_pos is not None and opp_pos is not None:
                 peeked = opponent.hand[opp_pos]
-                print(f"  👑 {self.name} used Black {card} to see {opponent.name}'s position {opp_pos}: {peeked}")
+                print(f"  {self.name} used Black {card} to see {opponent.name}'s position {opp_pos}: {peeked}")
                 game.swap(self, opponent, my_pos, opp_pos)
                 print(f"     Then swapped with own position {my_pos}")
                 return True
@@ -131,7 +135,6 @@ class CambioGame:
         player.known[index] = player.hand[index]
     
     def attempt_stick(self, player, position):
-        """Try to stick a matching card"""
         if not self.discard or position >= len(player.hand):
             return False
         
@@ -152,13 +155,13 @@ class CambioGame:
                     new_known[pos] = card
             player.known = new_known
             
-            print(f"  ✅ {player.name} successfully stuck {stuck_card}!")
+            print(f"  {player.name} successfully stuck {stuck_card}!")
             return True
         else:
             penalty = self.deck.draw()
             if penalty:
                 player.hand.append(penalty)
-                print(f"  ❌ {player.name} failed stick! Got penalty card")
+                print(f"  {player.name} failed stick! Got penalty card")
             return False
     
     def calculate_score(self, player):
@@ -191,6 +194,43 @@ class CambioGame:
             print("No cards left!")
             return
         
+        # Check if card has power and smart agent wants to use it
+        if drawn_card.has_power() and hasattr(player, 'choose_power_action'):
+            opponents = [p for i, p in enumerate(self.players) if i != self.current_player]
+            power_action = player.choose_power_action(drawn_card, self, opponents)
+            
+            if power_action:
+                if power_action['type'] == 'peek_own':
+                    pos = power_action['position']
+                    player.use_card_power(drawn_card, self, my_pos=pos)
+                
+                elif power_action['type'] == 'peek_opponent':
+                    opp = power_action['opponent']
+                    pos = power_action['position']
+                    player.use_card_power(drawn_card, self, opponent=opp, opp_pos=pos)
+                    if hasattr(player, 'opponent_known'):
+                        opp_id = self.players.index(opp)
+                        if opp_id not in player.opponent_known:
+                            player.opponent_known[opp_id] = {}
+                        player.opponent_known[opp_id][pos] = opp.hand[pos]
+                
+                elif power_action['type'] in ['blind_swap', 'king_swap']:
+                    opp = power_action['opponent']
+                    my_pos = power_action['my_position']
+                    opp_pos = power_action['opp_position']
+                    player.use_card_power(drawn_card, self, opponent=opp, my_pos=my_pos, opp_pos=opp_pos)
+                
+                self.discard.append(drawn_card)
+                
+                if player.call_cambio() and not self.cambio_called:
+                    self.cambio_called = True
+                    self.cambio_caller = self.current_player
+                    self.final_round_active = True
+                    print(f"\n {player.name} called CAMBIO!")
+                
+                self.advance_turn()
+                return
+        
         action = player.choose_action(drawn_card)
         
         if action['type'] == 'swap':
@@ -213,7 +253,7 @@ class CambioGame:
             self.cambio_called = True
             self.cambio_caller = self.current_player
             self.final_round_active = True
-            print(f"\n🎯 {player.name} called CAMBIO!")
+            print(f"\n {player.name} called CAMBIO!")
         
         self.advance_turn()
     
@@ -233,6 +273,11 @@ class CambioGame:
         while not self.game_over() and turn < max_turns:
             self.play_turn()
             turn += 1
+            
+            if self.deck.is_empty():
+                print("\nDECK IS EMPTY! Game ends immediately.")
+                print("Winner is player with LOWEST score.\n")
+                break
         
         print("\n" + "="*50)
         print("GAME OVER!")
@@ -267,7 +312,7 @@ def test():
     print(f"P1 knows: {p1.known}")
     
     print(f"\nScores: P1={game.calculate_score(p1)}, P2={game.calculate_score(p2)}")
-    print("\n✅ Test successful!")
+    print("\nTest successful!")
 
 if __name__ == "__main__":
     test()
