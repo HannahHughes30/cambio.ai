@@ -64,7 +64,7 @@ class Player:
     def set_hand(self, cards):
         self.hand = cards
     
-    def choose_draw(self):
+    def choose_draw(self, game):
         return 'deck'
     
     def choose_action(self, drawn_card):
@@ -73,33 +73,38 @@ class Player:
     def call_cambio(self):
         return False
     
-    def use_card_power(self, card, game, opponent=None, my_pos=None, opp_pos=None):
+    def use_card_power(self, card, game, opponent=None, my_pos=None, opp_pos=None, verbose=True):
         if card.rank in ['7', '8']:
             if my_pos is not None and 0 <= my_pos < len(self.hand):
                 game.peek(self, my_pos)
-                print(f"  {self.name} used {card} to peek at own position {my_pos}: {self.hand[my_pos]}")
+                if verbose:
+                    print(f"  {self.name} used {card} to peek at own position {my_pos}: {self.hand[my_pos]}")
                 return True
-        
+
         elif card.rank in ['9', '10']:
             if opponent and opp_pos is not None and 0 <= opp_pos < len(opponent.hand):
                 peeked = opponent.hand[opp_pos]
-                print(f"  {self.name} used {card} to peek at {opponent.name}'s position {opp_pos}: {peeked}")
+                if verbose:
+                    print(f"  {self.name} used {card} to peek at {opponent.name}'s position {opp_pos}: {peeked}")
                 return True
-        
+
         elif card.rank in ['J', 'Q']:
             if opponent and my_pos is not None and opp_pos is not None:
                 game.swap(self, opponent, my_pos, opp_pos)
-                print(f"  {self.name} used {card} to blind swap position {my_pos} with {opponent.name}'s position {opp_pos}")
+                if verbose:
+                    print(f"  {self.name} used {card} to blind swap position {my_pos} with {opponent.name}'s position {opp_pos}")
                 return True
-        
+
         elif card.rank == 'K' and card.suit in ['Spades', 'Clubs']:
             if opponent and my_pos is not None and opp_pos is not None:
                 peeked = opponent.hand[opp_pos]
-                print(f"  {self.name} used Black {card} to see {opponent.name}'s position {opp_pos}: {peeked}")
+                if verbose:
+                    print(f"  {self.name} used Black {card} to see {opponent.name}'s position {opp_pos}: {peeked}")
                 game.swap(self, opponent, my_pos, opp_pos)
-                print(f"     Then swapped with own position {my_pos}")
+                if verbose:
+                    print(f"     Then swapped with own position {my_pos}")
                 return True
-        
+
         return False
 
 class CambioGame:
@@ -124,6 +129,16 @@ class CambioGame:
         if first_card:
             self.discard.append(first_card)
     
+    def reshuffle_deck(self):
+        """Shuffle all discard pile cards except the top one back into the deck."""
+        if len(self.discard) <= 1:
+            return
+        top = self.discard[-1]
+        reshuffle_cards = self.discard[:-1]
+        self.discard = [top]
+        self.deck.cards.extend(reshuffle_cards)
+        random.shuffle(self.deck.cards)
+
     def swap(self, p1, p2, i1, i2):
         tmp = p1.hand[i1]
         p1.hand[i1] = p2.hand[i2]
@@ -134,19 +149,19 @@ class CambioGame:
             raise ValueError("Invalid peek index")
         player.known[index] = player.hand[index]
     
-    def attempt_stick(self, player, position):
+    def attempt_stick(self, player, position, verbose=True):
         if not self.discard or position >= len(player.hand):
             return False
-        
+
         top_card = self.discard[-1]
         player_card = player.hand[position]
-        
+
         if player_card.rank == top_card.rank:
             stuck_card = player.hand.pop(position)
             self.discard.append(stuck_card)
             if position in player.known:
                 del player.known[position]
-            
+
             new_known = {}
             for pos, card in player.known.items():
                 if pos > position:
@@ -154,14 +169,16 @@ class CambioGame:
                 else:
                     new_known[pos] = card
             player.known = new_known
-            
-            print(f"  {player.name} successfully stuck {stuck_card}!")
+
+            if verbose:
+                print(f"  {player.name} successfully stuck {stuck_card}!")
             return True
         else:
             penalty = self.deck.draw()
             if penalty:
                 player.hand.append(penalty)
-                print(f"  {player.name} failed stick! Got penalty card")
+                if verbose:
+                    print(f"  {player.name} failed stick! Got penalty card")
             return False
     
     def calculate_score(self, player):
@@ -177,85 +194,127 @@ class CambioGame:
                 w_name = p.name
         return f'"{w_name}" wins with a score of {w_score}!'
     
-    def play_turn(self):
+    def play_turn(self, turn_number=0, verbose=True):
         player = self.players[self.current_player]
-        print(f"\n--- {player.name}'s turn ---")
-        
-        draw_choice = player.choose_draw()
-        
+        if verbose:
+            print(f"\n--- {player.name}'s turn ---")
+
+        if self.deck.is_empty():
+            self.reshuffle_deck()
+
+        draw_choice = player.choose_draw(self)
+
+        turn_data = {
+            'turn_number': turn_number,
+            'player': player.name,
+            'draw_source': None,
+            'drawn_card': None,
+            'drawn_value': None,
+            'action': None,
+            'power_type': None,
+            'swap_position': None,
+            'cambio_called': False,
+            'hand_size': len(player.hand),
+        }
+
         if draw_choice == 'discard' and len(self.discard) > 0:
             drawn_card = self.discard.pop()
-            print(f"{player.name} drew from discard: {drawn_card}")
+            turn_data['draw_source'] = 'discard'
+            if verbose:
+                print(f"{player.name} drew from discard: {drawn_card}")
         else:
             drawn_card = self.deck.draw()
-            print(f"{player.name} drew from deck: {drawn_card}")
-        
+            turn_data['draw_source'] = 'deck'
+            if verbose:
+                print(f"{player.name} drew from deck: {drawn_card}")
+
         if not drawn_card:
-            print("No cards left!")
-            return
-        
-        # Check if card has power and smart agent wants to use it
+            if verbose:
+                print("No cards left!")
+            return turn_data
+
+        turn_data['drawn_card'] = repr(drawn_card)
+        turn_data['drawn_value'] = drawn_card.get_value()
+
+        # Check if card has power and agent wants to use it
         if drawn_card.has_power() and hasattr(player, 'choose_power_action'):
             opponents = [p for i, p in enumerate(self.players) if i != self.current_player]
             power_action = player.choose_power_action(drawn_card, self, opponents)
-            
+
             if power_action:
+                turn_data['action'] = 'power'
+                turn_data['power_type'] = power_action['type']
+
                 if power_action['type'] == 'peek_own':
                     pos = power_action['position']
-                    player.use_card_power(drawn_card, self, my_pos=pos)
-                
+                    player.use_card_power(drawn_card, self, my_pos=pos, verbose=verbose)
+
                 elif power_action['type'] == 'peek_opponent':
                     opp = power_action['opponent']
                     pos = power_action['position']
-                    player.use_card_power(drawn_card, self, opponent=opp, opp_pos=pos)
+                    player.use_card_power(drawn_card, self, opponent=opp, opp_pos=pos, verbose=verbose)
                     if hasattr(player, 'opponent_known'):
                         opp_id = self.players.index(opp)
                         if opp_id not in player.opponent_known:
                             player.opponent_known[opp_id] = {}
                         player.opponent_known[opp_id][pos] = opp.hand[pos]
-                
+
                 elif power_action['type'] in ['blind_swap', 'king_swap']:
                     opp = power_action['opponent']
                     my_pos = power_action['my_position']
                     opp_pos = power_action['opp_position']
-                    player.use_card_power(drawn_card, self, opponent=opp, my_pos=my_pos, opp_pos=opp_pos)
-                
+                    turn_data['swap_position'] = my_pos
+                    player.use_card_power(drawn_card, self, opponent=opp, my_pos=my_pos, opp_pos=opp_pos, verbose=verbose)
+
                 self.discard.append(drawn_card)
-                
+
                 if player.call_cambio() and not self.cambio_called:
                     self.cambio_called = True
                     self.cambio_caller = self.current_player
                     self.final_round_active = True
-                    print(f"\n {player.name} called CAMBIO!")
-                
+                    turn_data['cambio_called'] = True
+                    if verbose:
+                        print(f"\n {player.name} called CAMBIO!")
+
+                turn_data['hand_size'] = len(player.hand)
                 self.advance_turn()
-                return
-        
+                return turn_data
+
         action = player.choose_action(drawn_card)
-        
+
         if action['type'] == 'swap':
             pos = action.get('position', 0)
+            turn_data['action'] = 'swap'
+            turn_data['swap_position'] = pos
             if 0 <= pos < len(player.hand):
                 old_card = player.hand[pos]
                 player.hand[pos] = drawn_card
                 self.discard.append(old_card)
                 player.known[pos] = drawn_card
-                print(f"{player.name} swapped position {pos}: {old_card} -> {drawn_card}")
+                if verbose:
+                    print(f"{player.name} swapped position {pos}: {old_card} -> {drawn_card}")
             else:
                 self.discard.append(drawn_card)
-                print(f"{player.name} discarded (invalid position)")
-        
+                if verbose:
+                    print(f"{player.name} discarded (invalid position)")
+
         elif action['type'] == 'discard':
+            turn_data['action'] = 'discard'
             self.discard.append(drawn_card)
-            print(f"{player.name} discarded {drawn_card}")
-        
+            if verbose:
+                print(f"{player.name} discarded {drawn_card}")
+
         if player.call_cambio() and not self.cambio_called:
             self.cambio_called = True
             self.cambio_caller = self.current_player
             self.final_round_active = True
-            print(f"\n {player.name} called CAMBIO!")
-        
+            turn_data['cambio_called'] = True
+            if verbose:
+                print(f"\n {player.name} called CAMBIO!")
+
+        turn_data['hand_size'] = len(player.hand)
         self.advance_turn()
+        return turn_data
     
     def advance_turn(self):
         self.current_player = (self.current_player + 1) % len(self.players)
@@ -266,29 +325,37 @@ class CambioGame:
     def game_over(self):
         return self.cambio_called and not self.final_round_active
     
-    def play(self):
+    def play(self, verbose=True, max_turns=50):
         turn = 0
-        max_turns = 50
-        
+        turns = []
+
         while not self.game_over() and turn < max_turns:
-            self.play_turn()
+            turn_data = self.play_turn(turn_number=turn, verbose=verbose)
+            turns.append(turn_data)
             turn += 1
-            
-            if self.deck.is_empty():
-                print("\nDECK IS EMPTY! Game ends immediately.")
-                print("Winner is player with LOWEST score.\n")
-                break
-        
-        print("\n" + "="*50)
-        print("GAME OVER!")
-        print("="*50)
-        
-        for p in self.players:
-            score = self.calculate_score(p)
-            print(f"{p.name}: {p.hand} = {score} points")
-        
-        print("\n" + self.score_game())
-        return self.score_game()
+
+        scores = {p.name: self.calculate_score(p) for p in self.players}
+        hands = {p.name: [repr(c) for c in p.hand] for p in self.players}
+        winner = min(scores, key=scores.get)
+        cambio_caller = self.players[self.cambio_caller].name if self.cambio_caller is not None else None
+
+        if verbose:
+            print("\n" + "=" * 50)
+            print("GAME OVER!")
+            print("=" * 50)
+            for p in self.players:
+                print(f"{p.name}: {p.hand} = {scores[p.name]} points")
+            print(f"\n{winner} wins!")
+
+        return {
+            'winner': winner,
+            'scores': scores,
+            'hands': hands,
+            'total_turns': turn,
+            'turns': turns,
+            'cambio_caller': cambio_caller,
+            'deck_exhausted': self.deck.is_empty(),
+        }
 
 def test():
     print("=== TESTING BASIC FUNCTIONS ===\n")

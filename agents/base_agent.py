@@ -20,15 +20,10 @@ class BaseAgent(Player):
     def __init__(self, name="BaseAgent", discard_threshold=4):
         super().__init__(name)
         self.discard_threshold = discard_threshold
-        self._last_discard_top = None
 
-    def set_discard_top(self, card):
-        """Called by game to inform agent of discard pile top."""
-        self._last_discard_top = card
-
-    def choose_draw(self):
-        """Draw from discard if value < discard_threshold, otherwise draw from deck."""
-        if self._last_discard_top and self._last_discard_top.get_value() < self.discard_threshold:
+    def choose_draw(self, game):
+        """Draw from discard if top card value < discard_threshold, otherwise draw from deck."""
+        if game.discard and game.discard[-1].get_value() < self.discard_threshold:
             return 'discard'
         return 'deck'
 
