@@ -20,35 +20,42 @@ class TestBaseAgentInit:
         assert agent.name == "BaseAgent"
 
 
+class MockGame:
+    """Minimal game mock with a discard pile."""
+    def __init__(self, discard=None):
+        self.discard = discard or []
+
+
 class TestChooseDraw:
     def test_draws_from_deck_by_default(self):
         agent = BaseAgent()
-        assert agent.choose_draw() == 'deck'
+        game = MockGame()
+        assert agent.choose_draw(game) == 'deck'
 
     def test_draws_low_card_from_discard(self):
         agent = BaseAgent()
-        agent.set_discard_top(Card('2', 'Hearts'))  # Value 2 < 4
-        assert agent.choose_draw() == 'discard'
+        game = MockGame([Card('2', 'Hearts')])  # Value 2 < 4
+        assert agent.choose_draw(game) == 'discard'
 
     def test_draws_from_deck_for_high_discard(self):
         agent = BaseAgent()
-        agent.set_discard_top(Card('K', 'Spades'))
-        assert agent.choose_draw() == 'deck'
+        game = MockGame([Card('K', 'Spades')])
+        assert agent.choose_draw(game) == 'deck'
 
     def test_draws_from_deck_for_4(self):
         agent = BaseAgent()
-        agent.set_discard_top(Card('4', 'Hearts'))  # Value 4 is not < 4
-        assert agent.choose_draw() == 'deck'
+        game = MockGame([Card('4', 'Hearts')])  # Value 4 is not < 4
+        assert agent.choose_draw(game) == 'deck'
 
     def test_draws_ace_from_discard(self):
         agent = BaseAgent()
-        agent.set_discard_top(Card('A', 'Hearts'))  # Value 1 < 4
-        assert agent.choose_draw() == 'discard'
+        game = MockGame([Card('A', 'Hearts')])  # Value 1 < 4
+        assert agent.choose_draw(game) == 'discard'
 
     def test_draws_3_from_discard(self):
         agent = BaseAgent()
-        agent.set_discard_top(Card('3', 'Hearts'))  # Value 3 < 4
-        assert agent.choose_draw() == 'discard'
+        game = MockGame([Card('3', 'Hearts')])  # Value 3 < 4
+        assert agent.choose_draw(game) == 'discard'
 
 
 class TestChooseAction:

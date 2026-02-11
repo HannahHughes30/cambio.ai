@@ -13,15 +13,11 @@ class SmartAgent(Player):
     def __init__(self, name="SmartAgent", discard_threshold=4):
         super().__init__(name)
         self.discard_threshold = discard_threshold
-        self._last_discard_top = None
         self.opponent_known = {}
         self.opponent_hand_size = 4
 
-    def set_discard_top(self, card):
-        self._last_discard_top = card
-
-    def choose_draw(self):
-        if self._last_discard_top and self._last_discard_top.get_value() < self.discard_threshold:
+    def choose_draw(self, game):
+        if game.discard and game.discard[-1].get_value() < self.discard_threshold:
             return 'discard'
         return 'deck'
 
@@ -61,7 +57,6 @@ class SmartAgent(Player):
         
         opp_unknown_count = self.opponent_hand_size - opp_cards_known
         opp_estimated_score = opp_known_total + (opp_unknown_count * 6)
-        print(my_estimated_score, opp_estimated_score)
         # Only call if estimated score is low AND we're beating opponent by good margin
         if my_estimated_score < 10 and my_estimated_score < (opp_estimated_score - 4):
             return True
