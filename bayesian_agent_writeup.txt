@@ -1,0 +1,347 @@
+================================================================================
+BAYESIAN CAMBIO AGENT — TECHNICAL WRITEUP
+================================================================================
+
+1. OVERVIEW
+--------------------------------------------------------------------------------
+
+The Bayesian Cambio agent family uses probability-based card tracking to make
+optimal decisions in the card game Cambio. Rather than relying on simple
+heuristics ("swap if my card is bad"), these agents maintain a model of ALL
+54 cards in the deck and compute expected values dynamically as the game
+progresses.
+
+Two versions exist:
+  - BayesianV1: Full card tracking with EV-based decisions
+  - BayesianV2: Extends V1 with disruption-aware swap targeting and full
+                 rule support (third-party swaps, self-peek via Black King)
+
+Head-to-head, V2 beats V1 ~70% of the time. Both dominate non-Bayesian
+agents with 90-99% win rates.
+
+
+2. CARD TRACKING SYSTEM (CardTracker)
+--------------------------------------------------------------------------------
+
+The foundation of both agents is the CardTracker, which maintains a complete
+accounting of all 54 cards (52 standard + 2 jokers) across four locations:
+
+  (a) Discard pile     — fully known (public information)
+  (b) Own hand         — partially known (positions 0,1 known from deal)
+  (c) Opponent hands   — partially known (from peeks, inferred from actions)
+  (d) Unaccounted pool — everything else (deck + unknown hand positions)
+
+Card Values:
+  Joker = 0, Ace = 1, 2-10 = face value, J/Q = 10
+  Red King (Hearts/Diamonds) = -1, Black King (Spades/Clubs) = 10
+
+The tracker is initialized after the deal:
+  - Own positions 0 and 1 are known (Cambio rule: you peek two cards)
+  - Own positions 2 and 3 are unknown
+  - All opponent positions start unknown
+  - The first discard card is recorded
+
+After every turn, the tracker syncs with the game state:
+  - Discard pile is re-synced (handles reshuffles correctly)
+  - Opponent hand sizes are updated (tracks sticks and penalties)
+  - Known cards from peeks and swaps are recorded
+
+
+3. EXPECTED VALUE COMPUTATION
+--------------------------------------------------------------------------------
+
+The key insight: unknown positions don't have a fixed assumed value. Instead,
+the agent computes E[unknown] dynamically from the unaccounted card pool.
+
+  E[unknown] = mean(value(card) for card in unaccounted_cards)
+
+At game start with 54 cards, E[unknown] ~= 5.4. But as the game progresses
+and cards are revealed/discarded, this shifts. For example:
+  - If many low cards get discarded, E[unknown] rises (remaining unknowns
+    are likely higher)
+  - If many face cards get discarded, E[unknown] drops
+
+This matters for every decision:
+  - "Should I swap this drawn 4 into an unknown position?"
+    -> Only if 4 < E[unknown], because on average the unknown card is worse
+
+  Expected own score = sum over all positions of:
+    known_value(pos)  if position is known
+    E[unknown]        if position is unknown
+
+  Expected opponent score = same logic using our knowledge of their hand
+
+
+4. DECISION HEURISTICS — BayesianV1
+--------------------------------------------------------------------------------
+
+4a. DRAW DECISION (deck vs discard pile)
+
+    The discard pile top is public information. Take it only when clearly worth it.
+
+    Rules:
+    - Value <= 0 (Joker or Red King): ALWAYS take from discard
+    - Otherwise: take from discard only if best_improvement >= 3
+      where best_improvement = max over all own positions of
+        (current_EV_at_position - discard_value)
+    - Default: draw from deck
+
+    Rationale: Drawing from discard reveals your strategy to opponents.
+    The threshold of 3 ensures we only tip our hand for significant gains.
+
+4b. SWAP-OR-DISCARD DECISION (after drawing from deck)
+
+    For each own position, compute:
+      improvement = EV_at_position - drawn_card_value
+      info_bonus  = 1 if (position is unknown AND drawn_value <= 3) else 0
+      score       = improvement + info_bonus
+
+    Swap into the position with the highest score, if score > 0.
+    Otherwise discard the drawn card.
+
+    The info_bonus rewards placing known-low cards into unknown slots.
+    This accelerates our path to calling cambio (we need to know almost
+    all our cards before we can confidently call).
+
+    Constants:
+      info_bonus = 1 (applied when drawn_value <= 3 and target is unknown)
+      minimum score to swap = 0 (must be strictly positive)
+
+4c. POWER CARD DECISIONS
+
+    7/8 — Peek Own Card:
+      Target the first unknown position in our hand.
+      Skip if all positions are known.
+
+    9/10 — Peek Opponent Card:
+      Target the opponent with the lowest expected score (they're the
+      threat). Peek one of their unknown positions.
+      Fallback: any opponent with unknown positions.
+
+    J/Q — Blind Swap (self <-> opponent):
+      Trigger condition: worst_known_own_value > E[unknown] + 1
+      This means we only blind swap when we KNOW we have a bad card.
+      The +1 margin prevents marginal swaps.
+
+      Target selection: pick opponent position with lowest known card value.
+      We want to steal their best known card.
+      Fallback: random opponent, random position.
+
+    Black King — Peek Then Conditional Swap:
+      Trigger condition: worst_known_own_value > E[unknown] - 2
+      Lower threshold than J/Q because we peek before deciding to swap.
+      The -2 makes us more aggressive (we'll consider swapping even if
+      our worst card isn't terrible, since we get to see first).
+
+      Target: opponent with most unknown positions (maximize intel value).
+      After peeking: only swap if opponent's card value < our card value.
+      Records peeked card in tracker regardless of swap decision.
+
+4d. CAMBIO CALLING
+
+    Three conditions must ALL be met:
+
+    (1) Knowledge requirement:
+        known_count >= hand_size - 1
+        (Must know all but at most 1 card)
+
+    (2) Score threshold (adaptive by hand size):
+        hand_size 4:  threshold = 10
+        hand_size 3:  threshold = 7
+        hand_size 2:  threshold = 5
+        Expected own score must be < threshold
+
+    (3) Margin over ALL opponents:
+        For every opponent: my_expected < opponent_expected - adaptive_margin
+
+        adaptive_margin starts at 4 and decreases as we know more about
+        opponents (down to minimum 2):
+          knowledge_ratio = total_known_opp_positions / total_opp_positions
+          adaptive_margin = max(2, 4 - knowledge_ratio * 2)
+
+        This means: when we know a lot about opponents, we require less
+        margin because our estimates are more accurate.
+
+    Special case: if we know ALL our cards and score < 8, call regardless.
+
+4e. STICKING
+
+    After any card is discarded, check if any known own card matches the
+    discard top by rank. If so, attempt to stick it (remove from hand).
+    This is pure information play — we only stick cards we're certain about.
+
+    Constants:
+      cambio_threshold = 10 (base, adapts down for smaller hands)
+      cambio_margin = 4 (base, adapts down with opponent knowledge)
+
+
+5. DECISION HEURISTICS — BayesianV2 (ENHANCEMENTS)
+--------------------------------------------------------------------------------
+
+V2 extends V1 with three new capabilities:
+
+5a. OPPONENT SELF-KNOWLEDGE TRACKING
+
+    V2 maintains a model of what each opponent knows about their own hand:
+
+      opponent_self_knowledge = {opponent_name: set of positions they know}
+
+    Initialized: {0, 1} for all opponents (everyone peeks two cards at deal)
+
+    Updated on observed actions:
+      - Opponent draws + swaps into position X  -> gains knowledge of X
+      - Opponent's position targeted by blind/king swap -> loses knowledge
+      - Third-party swap targets -> both targets lose knowledge
+
+    This tracking enables disruption scoring (see below).
+
+5b. DISRUPTION-AWARE SWAP SCORING
+
+    V1's _find_best_swap_target picks purely by card value (steal the
+    lowest-value opponent card). V2 adds a disruption dimension:
+
+      score = -card_value + disruption_bonus
+
+    where disruption_bonus = 3 if the opponent knows that position.
+
+    Example:
+      Opponent position A: known 2 of Hearts (value 2), opponent knows it
+        score = -2 + 3 = 1
+      Opponent position B: known Ace (value 1), opponent does NOT know it
+        score = -1 + 0 = -1
+
+    V2 prefers position A despite the higher card value, because swapping
+    it disrupts the opponent's knowledge. They'll waste future turns
+    re-discovering what's at that position.
+
+    Constants:
+      DISRUPTION_BONUS = 3
+      GOOD_HAND_THRESHOLD = 5 (worst known card value at or below this
+                                means hand is "good enough" for disruption mode)
+
+5c. THIRD-PARTY SWAPS (J/Q)
+
+    In real Cambio, J/Q can swap ANY two cards on the table — not just
+    your own with an opponent's. V1 only supported self <-> opponent swaps.
+
+    V2 adds a two-path decision for J/Q:
+
+    Path 1 — Self-swap (same as V1, with disruption scoring):
+      Trigger: worst_known_own_value > E[unknown] + 1
+      Use enhanced _find_best_swap_target with disruption bonus.
+
+    Path 2 — Third-party disruption swap:
+      Trigger: worst_known_own_value <= GOOD_HAND_THRESHOLD (hand is good)
+               AND 2+ opponents exist
+      Action: swap two OPPONENT positions with each other
+
+      Target selection (_find_best_disruption_swap):
+        Find candidate positions where the opponent knows that position.
+        Sort by card value ascending (disrupt known-low cards first —
+        opponents value these most and will be most harmed by losing them).
+        Pick the best pair from different opponents.
+
+      Benefits:
+        - Both opponents lose knowledge of their swapped positions
+        - We reveal nothing about our own hand
+        - We maintain our good hand intact
+
+    Path 3 — Skip if neither applies.
+
+5d. ENHANCED BLACK KING (PEEK-ANY + SWAP-ANY-TWO)
+
+    In real Cambio, Black King lets you peek ANY card on the table
+    (including your own) and then swap ANY two cards. V1 only supported
+    peek-opponent + swap-self-opponent.
+
+    V2 adds two modes:
+
+    Disruption Mode (strong hand, 2+ opponents):
+      Trigger: worst_known_own_value <= GOOD_HAND_THRESHOLD
+
+      Peek target priority:
+        1. Own unknown position (self-intel — gets us closer to cambio)
+        2. Opponent unknown position (opponent with lowest expected score)
+
+      Swap: two opponent known positions with each other (same as J/Q
+      disruption path)
+
+      This is the most powerful play in V2: free self-intel + double
+      opponent disruption, all without touching our own hand.
+
+    Info-Gathering Mode (weak hand, fallback):
+      Same as V1 — peek opponent, conditionally swap self <-> opponent.
+      Trigger: worst_known_own_value > E[unknown] - 2
+
+
+6. GAME ENGINE EXTENSIONS FOR V2
+--------------------------------------------------------------------------------
+
+The game engine (game.py) was extended to support V2's full rule set:
+
+  use_card_power() now accepts additional parameters:
+    player2, pos2     — for third-party swaps (J/Q swapping two others)
+    peek_player, peek_pos — for Black King peek-any target
+
+  play_turn() handles three new power action types:
+    'third_party_swap' — J/Q swapping opponent1[pos1] with opponent2[pos2]
+    'king_peek_swap'   — Black King with separate peek and swap targets
+
+  turn_data now includes:
+    power_target_player2, power_target_position2 — second swap target
+    power_peek_player, power_peek_position — Black King peek target
+
+  All existing agent behavior is backward-compatible. V1 and simpler agents
+  still use the original self <-> opponent swap paths unchanged.
+
+
+7. BENCHMARK RESULTS
+--------------------------------------------------------------------------------
+
+Key matchups (100 matches each, first to 100 points loses):
+
+  V2 vs V1 (1v1):           V2 70%, V1 30%
+  V1+V2+Smart (3p):         V2 62%, V1 38%, Smart 0%
+  2xV2 + V1 (3p):           V2s 87%, V1 13%
+  5xV2 + V1 (6p):           V2s 90%, V1 10%
+  5xV1 + V2 (6p):           V1s 85%, V2 15% (fair share = 16.7%)
+
+  V1 vs Smart (1v1):        V1 99%, Smart 1%
+  V2 vs Smart (1v1):        V2 99%, Smart 1%
+  Both Bayesians vs Smart:  Identical dominance (~90-99%)
+
+Summary:
+  - V2 is ~10-15% better than V1 in absolute win rate terms
+  - The advantage comes from disruption plays and full rule utilization
+  - Against non-Bayesian opponents, both are equally dominant
+  - V2's edge diminishes when outnumbered by equally sophisticated agents
+  - The disruption strategy is a real but modest tiebreaker, not transformative
+
+
+8. CONSTANTS REFERENCE
+--------------------------------------------------------------------------------
+
+  CardTracker:
+    Full deck size                    = 54 (52 + 2 jokers)
+    Initial known positions per player = {0, 1}
+    E[unknown] fallback               = 5.0 (when no unaccounted cards)
+
+  BayesianV1:
+    Discard take threshold (value<=0)  = always take
+    Discard improvement threshold      = 3
+    Info bonus value                   = 1 (for drawn_value <= 3, unknown slot)
+    J/Q swap trigger                   = worst_known > E[unknown] + 1
+    Black King swap trigger            = worst_known > E[unknown] - 2
+    cambio_threshold (base)            = 10 (7 for 3 cards, 5 for 2 cards)
+    cambio_margin (base)               = 4 (reduces to 2 with opponent knowledge)
+    Full-knowledge cambio threshold    = 8
+
+  BayesianV2 (additional):
+    DISRUPTION_BONUS                   = 3
+    GOOD_HAND_THRESHOLD                = 5
+    Self-peek priority                 = always preferred over opponent peek
+                                         when own unknowns exist
+
+================================================================================
+END OF WRITEUP
+================================================================================

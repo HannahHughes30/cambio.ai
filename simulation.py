@@ -5,7 +5,7 @@ import statistics
 from collections import defaultdict
 
 from game import CambioGame
-from agents import BaseAgent, SmartAgent
+from agents import BaseAgent, SmartAgent, BayesianAgent, BayesianV2Agent
 
 # ---------------------------------------------------------------------------
 # Agent Registry
@@ -14,6 +14,8 @@ from agents import BaseAgent, SmartAgent
 AGENT_REGISTRY = {
     'base': BaseAgent,
     'smart': SmartAgent,
+    'bayesian': BayesianAgent,
+    'bayesian_v2': BayesianV2Agent,
 }
 
 
