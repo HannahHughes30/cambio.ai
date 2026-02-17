@@ -60,20 +60,34 @@ class Player:
         self.name = name
         self.hand = []
         self.known = {}
-    
+
     def set_hand(self, cards):
         self.hand = cards
-    
+
     def choose_draw(self, game):
         return 'deck'
-    
+
     def choose_action(self, drawn_card):
         return {'type': 'discard'}
-    
+
     def call_cambio(self):
         return False
+
+    def observe_turn(self, turn_data, game):
+        """Called on ALL players after each turn. Override in subclasses."""
+        pass
+
+    def choose_stick(self, game):
+        """Return list of positions to stick (empty = no stick). Override in subclasses."""
+        return []
+
+    def observe_stick(self, stick_data, game):
+        """Called on ALL players after any stick attempt. Override in subclasses."""
+        pass
     
-    def use_card_power(self, card, game, opponent=None, my_pos=None, opp_pos=None, verbose=True):
+    def use_card_power(self, card, game, opponent=None, my_pos=None, opp_pos=None,
+                        player2=None, pos2=None, peek_player=None, peek_pos=None,
+                        verbose=True):
         if card.rank in ['7', '8']:
             if my_pos is not None and 0 <= my_pos < len(self.hand):
                 game.peek(self, my_pos)
@@ -89,6 +103,13 @@ class Player:
                 return True
 
         elif card.rank in ['J', 'Q']:
+            # Third-party swap: swap opponent[opp_pos] with player2[pos2]
+            if opponent and player2 and opp_pos is not None and pos2 is not None:
+                game.swap(opponent, player2, opp_pos, pos2)
+                if verbose:
+                    print(f"  {self.name} used {card} to swap {opponent.name}'s position {opp_pos} with {player2.name}'s position {pos2}")
+                return True
+            # Self-opponent swap (original path)
             if opponent and my_pos is not None and opp_pos is not None:
                 game.swap(self, opponent, my_pos, opp_pos)
                 if verbose:
@@ -96,6 +117,26 @@ class Player:
                 return True
 
         elif card.rank == 'K' and card.suit in ['Spades', 'Clubs']:
+            # Extended Black King: peek any card, then swap any two
+            if peek_player and peek_pos is not None:
+                peeked = peek_player.hand[peek_pos]
+                if verbose:
+                    print(f"  {self.name} used Black {card} to see {peek_player.name}'s position {peek_pos}: {peeked}")
+                # Third-party swap path
+                if opponent and player2 and opp_pos is not None and pos2 is not None:
+                    game.swap(opponent, player2, opp_pos, pos2)
+                    if verbose:
+                        print(f"     Then swapped {opponent.name}'s position {opp_pos} with {player2.name}'s position {pos2}")
+                    return True
+                # Self-opponent swap after peek
+                if opponent and my_pos is not None and opp_pos is not None:
+                    game.swap(self, opponent, my_pos, opp_pos)
+                    if verbose:
+                        print(f"     Then swapped own position {my_pos} with {opponent.name}'s position {opp_pos}")
+                    return True
+                # Peek-only (no swap)
+                return True
+            # Original Black King path (backward compat)
             if opponent and my_pos is not None and opp_pos is not None:
                 peeked = opponent.hand[opp_pos]
                 if verbose:
@@ -215,6 +256,14 @@ class CambioGame:
             'swap_position': None,
             'cambio_called': False,
             'hand_size': len(player.hand),
+            'discarded_card': None,
+            'discarded_value': None,
+            'power_target_player': None,
+            'power_target_position': None,
+            'power_target_player2': None,
+            'power_target_position2': None,
+            'power_peek_player': None,
+            'power_peek_position': None,
         }
 
         if draw_choice == 'discard' and len(self.discard) > 0:
@@ -253,20 +302,68 @@ class CambioGame:
                     opp = power_action['opponent']
                     pos = power_action['position']
                     player.use_card_power(drawn_card, self, opponent=opp, opp_pos=pos, verbose=verbose)
+                    turn_data['power_target_player'] = opp.name
+                    turn_data['power_target_position'] = pos
                     if hasattr(player, 'opponent_known'):
                         opp_id = self.players.index(opp)
                         if opp_id not in player.opponent_known:
                             player.opponent_known[opp_id] = {}
                         player.opponent_known[opp_id][pos] = opp.hand[pos]
 
+                elif power_action['type'] == 'third_party_swap':
+                    opp1 = power_action['opponent']
+                    pos1 = power_action['opp_position']
+                    opp2 = power_action['player2']
+                    pos2 = power_action['position2']
+                    turn_data['power_target_player'] = opp1.name
+                    turn_data['power_target_position'] = pos1
+                    turn_data['power_target_player2'] = opp2.name
+                    turn_data['power_target_position2'] = pos2
+                    player.use_card_power(drawn_card, self, opponent=opp1, opp_pos=pos1,
+                                          player2=opp2, pos2=pos2, verbose=verbose)
+
+                elif power_action['type'] == 'king_peek_swap':
+                    # Black King: peek any card, then optionally swap any two
+                    pk_player = power_action['peek_player']
+                    pk_pos = power_action['peek_position']
+                    turn_data['power_peek_player'] = pk_player.name
+                    turn_data['power_peek_position'] = pk_pos
+                    swap_info = power_action.get('swap')
+                    if swap_info:
+                        s_p1 = swap_info['player1']
+                        s_pos1 = swap_info['position1']
+                        s_p2 = swap_info['player2']
+                        s_pos2 = swap_info['position2']
+                        turn_data['power_target_player'] = s_p1.name
+                        turn_data['power_target_position'] = s_pos1
+                        turn_data['power_target_player2'] = s_p2.name
+                        turn_data['power_target_position2'] = s_pos2
+                        # Determine if self is involved in the swap
+                        if s_p1 == player:
+                            turn_data['swap_position'] = s_pos1
+                        elif s_p2 == player:
+                            turn_data['swap_position'] = s_pos2
+                        player.use_card_power(drawn_card, self, opponent=s_p1, opp_pos=s_pos1,
+                                              player2=s_p2, pos2=s_pos2,
+                                              peek_player=pk_player, peek_pos=pk_pos,
+                                              verbose=verbose)
+                    else:
+                        # Peek only, no swap
+                        player.use_card_power(drawn_card, self, peek_player=pk_player, peek_pos=pk_pos,
+                                              verbose=verbose)
+
                 elif power_action['type'] in ['blind_swap', 'king_swap']:
                     opp = power_action['opponent']
                     my_pos = power_action['my_position']
                     opp_pos = power_action['opp_position']
                     turn_data['swap_position'] = my_pos
+                    turn_data['power_target_player'] = opp.name
+                    turn_data['power_target_position'] = opp_pos
                     player.use_card_power(drawn_card, self, opponent=opp, my_pos=my_pos, opp_pos=opp_pos, verbose=verbose)
 
                 self.discard.append(drawn_card)
+                turn_data['discarded_card'] = repr(drawn_card)
+                turn_data['discarded_value'] = drawn_card.get_value()
 
                 if player.call_cambio() and not self.cambio_called:
                     self.cambio_called = True
@@ -277,6 +374,7 @@ class CambioGame:
                         print(f"\n {player.name} called CAMBIO!")
 
                 turn_data['hand_size'] = len(player.hand)
+                self._broadcast_and_stick(turn_data, verbose)
                 self.advance_turn()
                 return turn_data
 
@@ -291,16 +389,22 @@ class CambioGame:
                 player.hand[pos] = drawn_card
                 self.discard.append(old_card)
                 player.known[pos] = drawn_card
+                turn_data['discarded_card'] = repr(old_card)
+                turn_data['discarded_value'] = old_card.get_value()
                 if verbose:
                     print(f"{player.name} swapped position {pos}: {old_card} -> {drawn_card}")
             else:
                 self.discard.append(drawn_card)
+                turn_data['discarded_card'] = repr(drawn_card)
+                turn_data['discarded_value'] = drawn_card.get_value()
                 if verbose:
                     print(f"{player.name} discarded (invalid position)")
 
         elif action['type'] == 'discard':
             turn_data['action'] = 'discard'
             self.discard.append(drawn_card)
+            turn_data['discarded_card'] = repr(drawn_card)
+            turn_data['discarded_value'] = drawn_card.get_value()
             if verbose:
                 print(f"{player.name} discarded {drawn_card}")
 
@@ -313,9 +417,33 @@ class CambioGame:
                 print(f"\n {player.name} called CAMBIO!")
 
         turn_data['hand_size'] = len(player.hand)
+        self._broadcast_and_stick(turn_data, verbose)
         self.advance_turn()
         return turn_data
     
+    def _broadcast_and_stick(self, turn_data, verbose):
+        """Broadcast turn observation to all players, then offer stick opportunities."""
+        for p in self.players:
+            p.observe_turn(turn_data, self)
+        self._offer_stick_opportunities(verbose)
+
+    def _offer_stick_opportunities(self, verbose):
+        """Let the acting player attempt to stick cards matching the discard top."""
+        player = self.players[self.current_player]
+        positions = player.choose_stick(self)
+        for pos in positions:
+            if pos < len(player.hand):
+                success = self.attempt_stick(player, pos, verbose=verbose)
+                stick_data = {
+                    'player': player.name,
+                    'position': pos,
+                    'success': success,
+                }
+                for obs in self.players:
+                    obs.observe_stick(stick_data, self)
+                # Only one stick attempt per turn
+                break
+
     def advance_turn(self):
         self.current_player = (self.current_player + 1) % len(self.players)
         
