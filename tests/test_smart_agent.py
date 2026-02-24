@@ -20,8 +20,10 @@ class TestSmartAgentInit:
         assert agent.name == "SmartAgent"
 
 class TestCallCambio:
-    def test_calls_cambio_by_default(self):
+    def test_does_not_call_cambio_with_unknown_cards(self):
         agent = SmartAgent()
+        agent.hand = [Card('5', 'Hearts'), Card('6', 'Spades'), Card('7', 'Diamonds'), Card('8', 'Clubs')]
+        agent.known = {0: agent.hand[0], 1: agent.hand[1]}
         assert agent.call_cambio() is False
 
     def test_calls_cambio_with_confidence(self):

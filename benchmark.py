@@ -2,7 +2,7 @@
 
 import argparse
 
-from simulation import Tournament
+from simulation import Tournament, compute_round_stats, aggregate_round_stats
 
 
 MATCHUPS = [
@@ -221,6 +221,40 @@ def run_benchmarks(show_charts=True):
             cwin_rate = f"{cwins/calls:.0%}" if calls > 0 else "n/a"
             print(f"  {n:<15} {wins:>5} {rate:>5.0%} {dist['mean']:>10.1f} {dist['stdev']:>8.1f}  {calls:>6} {cwin_rate:>10}")
         print(f"  Avg rounds/match: {summary['avg_rounds']:.1f}")
+
+    # --- Gameplay Stats table ---
+    print("\n" + "=" * 80)
+    print("GAMEPLAY STATS (per-round averages)")
+    print("=" * 80)
+
+    for name, configs, summary, full_result, _sample in results:
+        # Collect round stats across all matches
+        all_round_stats = []
+        for match in full_result['match_results']:
+            for rnd in match['round_results']:
+                all_round_stats.append(compute_round_stats(rnd))
+
+        agent_names = [c['name'] for c in configs]
+        agg = aggregate_round_stats(all_round_stats, agent_names)
+
+        print(f"\n--- {name} ({len(all_round_stats)} rounds) ---")
+        header = (f"  {'Agent':<15} {'AvgTurns':>8} {'AvgCards':>8} {'AvgScore':>8} "
+                  f"{'CambioRate':>10} {'AvgCmbTurn':>10} {'CallerWin%':>10} "
+                  f"{'PowerUse':>8} {'DiscDraw%':>9} {'Swap%':>6}")
+        print(header)
+        divider = (f"  {'-'*15} {'-'*8} {'-'*8} {'-'*8} "
+                   f"{'-'*10} {'-'*10} {'-'*10} "
+                   f"{'-'*8} {'-'*9} {'-'*6}")
+        print(divider)
+
+        for ag_name in agent_names:
+            s = agg[ag_name]
+            cwr = f"{s['cambio_caller_win_rate']:.0%}" if s['cambio_caller_win_rate'] is not None else "n/a"
+            act = f"{s['avg_turn_to_call_cambio']:.1f}" if s['avg_turn_to_call_cambio'] is not None else "n/a"
+            print(f"  {ag_name:<15} {s['avg_turns_per_round']:>8.1f} {s['avg_hand_size_at_end']:>8.1f} "
+                  f"{s['avg_score_per_round']:>8.1f} {s['cambio_call_rate']:>9.0%} "
+                  f"{act:>10} {cwr:>10} {s['total_power_per_round']:>8.1f} "
+                  f"{s['discard_draw_rate']:>8.0%} {s['swap_rate']:>6.0%}")
 
     print("\n" + "=" * 80)
     print("Done.")

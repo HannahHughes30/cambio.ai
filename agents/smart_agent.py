@@ -40,8 +40,8 @@ class SmartAgent(Player):
 
     def call_cambio(self):
         """Call Cambio only when confident and have enough information."""
-        # Need to know at least 3 of 4 cards to be confident
-        if len(self.known) < 3:
+        # Need to know at least 3 of 4 cards to be confident (or all if hand < 3)
+        if len(self.known) < len(self.hand) and len(self.known) < 3:
             return False
         
         my_known_score = sum(card.get_value() for card in self.known.values())
@@ -66,6 +66,9 @@ class SmartAgent(Player):
             return True
             
         return False
+
+    def observe_turn(self, turn_data, game):
+        self.opponent_hand_size = sum(len(p.hand) for p in game.players if p.name != self.name)
 
     def choose_power_action(self, card, game, opponents):
         if card.rank in ['7', '8']:

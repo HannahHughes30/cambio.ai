@@ -2,7 +2,7 @@
 
 import argparse
 import statistics
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from game import CambioGame
 from agents import BaseAgent, SmartAgent, BayesianAgent, BayesianV2Agent
@@ -23,6 +23,113 @@ def create_agent(agent_type, name, **kwargs):
     """Factory: create an agent by type string."""
     cls = AGENT_REGISTRY[agent_type]
     return cls(name=name, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Per-round & aggregate gameplay stats
+# ---------------------------------------------------------------------------
+
+def compute_round_stats(round_result):
+    """Extract per-round gameplay metrics from turn data."""
+    turns = round_result['turns']
+    players = set()
+    power_usage = defaultdict(Counter)       # {player: {power_type: count}}
+    discard_draws = Counter()                # {player: count}
+    swaps = Counter()                        # {player: count}
+    turn_counts = Counter()                  # {player: turns taken}
+
+    cambio_turn = None
+
+    for td in turns:
+        p = td['player']
+        players.add(p)
+        turn_counts[p] += 1
+
+        if td.get('draw_source') == 'discard':
+            discard_draws[p] += 1
+
+        if td.get('action') == 'swap':
+            swaps[p] += 1
+
+        if td.get('power_type'):
+            power_usage[p][td['power_type']] += 1
+
+        if td.get('cambio_called') and cambio_turn is None:
+            cambio_turn = td['turn_number']
+
+    return {
+        'total_turns': round_result['total_turns'],
+        'cambio_caller': round_result['cambio_caller'],
+        'cambio_turn': cambio_turn,
+        'winner': round_result['winner'],
+        'scores': round_result['scores'],
+        'hand_sizes': {p: len(cards) for p, cards in round_result['hands'].items()},
+        'power_usage': dict(power_usage),
+        'cards_drawn_from_discard': dict(discard_draws),
+        'cards_swapped': dict(swaps),
+        'turn_counts': dict(turn_counts),
+    }
+
+
+def aggregate_round_stats(round_stats_list, agent_names):
+    """Aggregate per-round stats into per-agent summaries."""
+    n = len(round_stats_list)
+    if n == 0:
+        return {}
+
+    # Accumulators per agent
+    total_turns = defaultdict(int)
+    total_hand_size = defaultdict(int)
+    total_score = defaultdict(int)
+    cambio_calls = defaultdict(int)
+    cambio_wins = defaultdict(int)
+    cambio_turn_sum = defaultdict(int)
+    power_totals = defaultdict(Counter)
+    total_discard_draws = defaultdict(int)
+    total_swaps = defaultdict(int)
+    total_turn_count = defaultdict(int)
+
+    for rs in round_stats_list:
+        for name in agent_names:
+            total_turns[name] += rs['total_turns']
+            total_hand_size[name] += rs['hand_sizes'].get(name, 0)
+            total_score[name] += rs['scores'].get(name, 0)
+            total_discard_draws[name] += rs['cards_drawn_from_discard'].get(name, 0)
+            total_swaps[name] += rs['cards_swapped'].get(name, 0)
+            total_turn_count[name] += rs['turn_counts'].get(name, 0)
+
+            for ptype, cnt in rs['power_usage'].get(name, {}).items():
+                power_totals[name][ptype] += cnt
+
+            if rs['cambio_caller'] == name:
+                cambio_calls[name] += 1
+                cambio_turn_sum[name] += (rs['cambio_turn'] or 0)
+                if rs['winner'] == name:
+                    cambio_wins[name] += 1
+
+    result = {}
+    for name in agent_names:
+        calls = cambio_calls[name]
+        turns_taken = total_turn_count[name]
+        result[name] = {
+            'avg_turns_per_round': total_turns[name] / n,
+            'avg_hand_size_at_end': total_hand_size[name] / n,
+            'avg_score_per_round': total_score[name] / n,
+            'cambio_call_count': calls,
+            'cambio_call_rate': calls / n,
+            'avg_turn_to_call_cambio': cambio_turn_sum[name] / calls if calls else None,
+            'cambio_caller_win_rate': cambio_wins[name] / calls if calls else None,
+            'power_usage': total_power_per_round(power_totals[name], n),
+            'total_power_per_round': sum(power_totals[name].values()) / n,
+            'discard_draw_rate': total_discard_draws[name] / turns_taken if turns_taken else 0,
+            'swap_rate': total_swaps[name] / turns_taken if turns_taken else 0,
+        }
+    return result
+
+
+def total_power_per_round(power_counter, num_rounds):
+    """Compute average per-round usage for each power type."""
+    return {ptype: cnt / num_rounds for ptype, cnt in power_counter.items()}
 
 
 # ---------------------------------------------------------------------------

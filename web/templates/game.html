@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cambio</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="game-body">
+    <div class="game-container">
+        <div class="game-header">
+            <div class="game-title">Cambio</div>
+            <div id="turn-indicator" class="turn-indicator waiting">Connecting...</div>
+        </div>
+
+        <div id="cambio-banner" class="cambio-banner hidden"></div>
+
+        <!-- Opponents -->
+        <div id="opponents-area" class="opponents-area"></div>
+
+        <!-- Table center: deck + discard -->
+        <div class="table-center">
+            <div class="pile-group">
+                <div class="card card-back deck-card">
+                    <span class="deck-count" id="deck-count">0</span>
+                </div>
+                <div class="pile-label">Deck</div>
+            </div>
+            <div class="pile-group">
+                <div class="card discard-card empty" id="discard-pile">
+                    <span class="empty-label">Empty</span>
+                </div>
+                <div class="pile-label">Discard</div>
+            </div>
+        </div>
+
+        <!-- Your hand -->
+        <div class="your-section">
+            <div class="your-label" id="hand-label">Your Hand</div>
+            <div id="your-hand" class="hand-grid"></div>
+        </div>
+
+        <!-- Prompt area -->
+        <div id="prompt-area" class="prompt-area hidden">
+            <div id="prompt-text" class="prompt-text"></div>
+            <div id="prompt-buttons" class="prompt-buttons"></div>
+        </div>
+
+        <!-- Game log -->
+        <div class="log-section">
+            <div class="log-title">Game Log</div>
+            <div id="game-log" class="game-log"></div>
+        </div>
+
+        <!-- Game over overlay -->
+        <div id="game-over" class="game-over-overlay hidden">
+            <div class="game-over-panel">
+                <h2 class="go-title">Game Over</h2>
+                <div id="game-over-results"></div>
+                <div class="go-buttons">
+                    <button class="btn btn-primary" onclick="playAgainSame()">Same Players</button>
+                    <button class="btn btn-secondary" onclick="playAgain()">Back to Lobby</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+    <script>const PLAYER_ID = '{{ player_id }}';</script>
+    <script src="/static/js/game.js"></script>
+</body>
+</html>
