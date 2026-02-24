@@ -326,6 +326,8 @@ class BayesianAgent(Player):
         """Override for Black King: peek first, only swap if beneficial."""
         if card.rank == 'K' and card.suit in ['Spades', 'Clubs']:
             if opponent and my_pos is not None and opp_pos is not None:
+                if opp_pos < 0 or opp_pos >= len(opponent.hand) or my_pos < 0 or my_pos >= len(self.hand):
+                    return False
                 # Peek at opponent's card
                 peeked = opponent.hand[opp_pos]
                 peeked_value = peeked.get_value()

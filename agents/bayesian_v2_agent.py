@@ -369,6 +369,8 @@ class BayesianV2Agent(BayesianAgent):
         if card.rank == 'K' and card.suit in ['Spades', 'Clubs']:
             # Extended path: peek any target, then swap any two
             if peek_player and peek_pos is not None:
+                if peek_pos < 0 or peek_pos >= len(peek_player.hand):
+                    return False
                 peeked = peek_player.hand[peek_pos]
                 peeked_value = peeked.get_value()
                 if verbose:
@@ -382,6 +384,8 @@ class BayesianV2Agent(BayesianAgent):
 
                 # Third-party swap
                 if opponent and player2 and opp_pos is not None and pos2 is not None:
+                    if opp_pos < 0 or opp_pos >= len(opponent.hand) or pos2 < 0 or pos2 >= len(player2.hand):
+                        return True  # Peek succeeded, swap out of bounds
                     game.swap(opponent, player2, opp_pos, pos2)
                     if verbose:
                         print(f"     Then swapped {opponent.name}'s position {opp_pos} with {player2.name}'s position {pos2}")
@@ -389,6 +393,8 @@ class BayesianV2Agent(BayesianAgent):
 
                 # Self-opponent swap (with conditional logic)
                 if opponent and my_pos is not None and opp_pos is not None:
+                    if my_pos < 0 or my_pos >= len(self.hand) or opp_pos < 0 or opp_pos >= len(opponent.hand):
+                        return True  # Peek succeeded, swap out of bounds
                     peek_is_opp = (peek_player == opponent and peek_pos == opp_pos)
                     if peek_is_opp:
                         my_card_value = self.hand[my_pos].get_value()
@@ -410,6 +416,8 @@ class BayesianV2Agent(BayesianAgent):
 
             # Original conditional swap path (backward compat with king_swap type)
             if opponent and my_pos is not None and opp_pos is not None:
+                if opp_pos < 0 or opp_pos >= len(opponent.hand) or my_pos < 0 or my_pos >= len(self.hand):
+                    return False
                 peeked = opponent.hand[opp_pos]
                 peeked_value = peeked.get_value()
                 if verbose:

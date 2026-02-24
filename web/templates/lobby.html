@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cambio - Lobby</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="lobby-container">
+        <h1>Cambio</h1>
+        <p class="subtitle">Card Game</p>
+
+        <div class="add-player-form">
+            <input type="text" id="player-name" placeholder="Player name" maxlength="20">
+            <select id="player-type">
+                <option value="human">Human</option>
+                <option value="base">Bot: Base</option>
+                <option value="smart">Bot: Smart</option>
+                <option value="bayesian">Bot: Bayesian</option>
+                <option value="bayesian_v2">Bot: Bayesian V2</option>
+            </select>
+            <button id="add-btn" onclick="addPlayer()">Add Player</button>
+        </div>
+
+        <div class="player-list" id="player-list"></div>
+
+        <div class="lobby-actions">
+            <button id="start-btn" onclick="startGame()" disabled>Start Game</button>
+            <p id="lobby-msg" class="lobby-msg"></p>
+        </div>
+
+        <div id="error-msg" class="error-msg"></div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+    <script src="/static/js/lobby.js"></script>
+</body>
+</html>
