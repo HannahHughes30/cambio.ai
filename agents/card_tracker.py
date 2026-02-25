@@ -272,6 +272,10 @@ class CardTracker:
         if name in self.opponent_self_knowledge:
             self.opponent_self_knowledge[name].discard(pos)
 
+    def count_rank_in_unaccounted(self, rank):
+        """Count how many cards of *rank* exist in the unaccounted pool."""
+        return sum(1 for r, s in self.unaccounted_cards() if r == rank)
+
     def get_opponent_self_knowledge(self, name):
         """Return the set of positions an opponent likely knows."""
         return self.opponent_self_knowledge.get(name, set())
