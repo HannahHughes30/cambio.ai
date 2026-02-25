@@ -5,6 +5,10 @@ Extends BayesianAgent with:
 - Disruption-weighted swap scoring (prefer swapping positions opponents know)
 - Third-party swaps via J/Q (swap two opponents' cards without involving own hand)
 - Enhanced Black King with peek-any + swap-any-two support
+- Probabilistic stick play using unaccounted card distribution
+- Improved cambio timing with defense buffer and preemptive calling
+- Opponent-count-scaled disruption bonus for 1v1 accuracy
+- Smarter 9/10 peek targeting based on card distribution
 """
 
 import random
@@ -15,23 +19,26 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from agents.bayesian_agent import BayesianAgent
 from agents.card_tracker import card_to_tuple, tuple_value
 
-# Bonus added to swap score when the target position is known by its owner
-DISRUPTION_BONUS = 3
+# Max disruption bonus (scaled down by 1/num_opponents for 1v1)
+DISRUPTION_BONUS_MAX = 3
 # Threshold: if our worst known card value is at or below this, hand is "good enough"
 # to consider disruption-only moves instead of self-improving swaps
 GOOD_HAND_THRESHOLD = 5
+# EV threshold for probabilistic sticking: stick if EV(stick) > this
+STICK_EV_THRESHOLD = 2.0
 
 
 class BayesianV2Agent(BayesianAgent):
     """Bayesian agent with disruption-aware swap targeting."""
 
     def __init__(self, name="BayesianV2Agent", discard_threshold=None,
-                 cambio_threshold=10, cambio_margin=4, cambio_knowledge_gap=1,
-                 ev_dominance_margin=8):
+                 cambio_threshold=10, cambio_margin=3, cambio_knowledge_gap=2,
+                 ev_dominance_margin=8, stick_ev_threshold=STICK_EV_THRESHOLD):
         super().__init__(name=name, discard_threshold=discard_threshold,
                          cambio_threshold=cambio_threshold, cambio_margin=cambio_margin,
                          cambio_knowledge_gap=cambio_knowledge_gap,
                          ev_dominance_margin=ev_dominance_margin)
+        self.stick_ev_threshold = stick_ev_threshold
 
     def _ensure_initialized(self, game):
         """Extend parent init to set up opponent self-knowledge."""
@@ -111,19 +118,106 @@ class BayesianV2Agent(BayesianAgent):
                 self.tracker.opponent_loses_knowledge(acting, swap_position)
 
     # ------------------------------------------------------------------
-    # Enhanced swap targeting with disruption scoring
+    # Probabilistic stick play (Priority 1)
+    # ------------------------------------------------------------------
+
+    def choose_stick(self, game):
+        """Stick known matches (like V1) PLUS probabilistic sticks for unknowns.
+
+        For unknown positions, compute:
+            P(match) = count_of_rank_in_unaccounted / total_unaccounted
+            EV(stick) = P(match) * card_value_at_pos - (1 - P(match)) * E[penalty]
+        Stick if EV(stick) > stick_ev_threshold.
+        """
+        if not game.discard:
+            return []
+
+        top_rank = game.discard[-1].rank
+        top_value = game.discard[-1].get_value()
+        positions = []
+
+        # Known matches (same as V1)
+        for pos, card in self.tracker.own_hand.items():
+            if card is not None and card[0] == top_rank:
+                positions.append(pos)
+
+        # Probabilistic sticks for unknown positions
+        unaccounted = self.tracker.unaccounted_cards()
+        total_unaccounted = len(unaccounted)
+        if total_unaccounted > 0:
+            rank_count = self.tracker.count_rank_in_unaccounted(top_rank)
+            p_match = rank_count / total_unaccounted
+            e_penalty = self.tracker.expected_value_of_unknown()
+
+            for pos, card in self.tracker.own_hand.items():
+                if card is not None:
+                    continue  # Already handled known cards above
+                if pos >= len(self.hand):
+                    continue
+                # EV of sticking: if match, we remove a card worth top_value
+                # from our hand; if miss, we gain a penalty card worth e_penalty
+                ev_stick = p_match * top_value - (1 - p_match) * e_penalty
+                if ev_stick > self.stick_ev_threshold:
+                    positions.append(pos)
+
+        return positions
+
+    # ------------------------------------------------------------------
+    # Improved cambio timing (Priority 2)
+    # ------------------------------------------------------------------
+
+    def call_cambio(self):
+        """Enhanced cambio: aggressive call with excellent known hand,
+        plus opponent-knowledge-aware preemption."""
+        if not self._initialized:
+            return False
+
+        known_count = self.tracker.own_known_count()
+        hand_size = len(self.hand)
+        my_expected = self.tracker.expected_own_score()
+
+        # Aggressive call: know all cards and score is excellent
+        # V1 requires score < 8 for this path; V2 lowers to 6
+        if known_count == hand_size and my_expected <= 6:
+            return True
+
+        # Preemptive call: if we detect opponent is ready to call,
+        # call first ONLY if we have strong margin
+        for name in self.tracker.opponent_hand_sizes:
+            opp_knowledge = self.tracker.get_opponent_self_knowledge(name)
+            opp_hand_size = self.tracker.opponent_hand_sizes[name]
+            # Opponent knows all or nearly all their cards
+            if len(opp_knowledge) >= opp_hand_size:
+                opp_expected = self.tracker.expected_opponent_score(name)
+                # Only preempt with strong advantage and high confidence
+                if (known_count >= hand_size - self.cambio_knowledge_gap
+                        and my_expected < self.cambio_threshold
+                        and my_expected < opp_expected - 2):
+                    return True
+
+        return super().call_cambio()
+
+    # ------------------------------------------------------------------
+    # Enhanced swap targeting with disruption scoring (Priority 3: scaled bonus)
     # ------------------------------------------------------------------
 
     def _find_best_swap_target(self, opponents):
         """Find the best opponent position to swap with, factoring in disruption.
 
-        score = -card_value + disruption_bonus (if opponent knows that position)
-        Lower card value = better target (we want their good cards).
-        Disruption bonus rewards swapping positions the opponent knows.
+        score = -card_value + scaled_disruption_bonus
+        The disruption bonus is scaled by number of opponents: full bonus with 2+,
+        reduced to 1 in 1v1 so card value dominates the decision.
         """
         best_opp = None
         best_pos = None
         best_score = float('-inf')
+
+        # Scale disruption bonus: full (3) with 2+ opponents, 1 in 1v1
+        num_opponents = len(opponents)
+        if num_opponents >= 2:
+            disruption_bonus = DISRUPTION_BONUS_MAX
+        else:
+            disruption_bonus = min(1, DISRUPTION_BONUS_MAX)
 
         for opp in opponents:
             if opp.name not in self.tracker.opponent_hands:
@@ -134,7 +228,7 @@ class BayesianV2Agent(BayesianAgent):
                     val = tuple_value(card[0], card[1])
                     score = -val
                     if pos in opp_knowledge:
-                        score += DISRUPTION_BONUS
+                        score += disruption_bonus
                     if score > best_score:
                         best_score = score
                         best_opp = opp
@@ -196,7 +290,7 @@ class BayesianV2Agent(BayesianAgent):
             return super().choose_power_action(card, game, opponents)
 
         elif card.rank in ['9', '10']:
-            return super().choose_power_action(card, game, opponents)
+            return self._choose_peek_opponent_action(card, game, opponents)
 
         elif card.rank in ['J', 'Q']:
             return self._choose_jq_action(card, game, opponents)
@@ -206,36 +300,124 @@ class BayesianV2Agent(BayesianAgent):
 
         return None
 
+    def _choose_peek_opponent_action(self, card, game, opponents):
+        """9/10: peek opponent position most likely to be low-value.
+
+        Instead of picking a random unknown position, weight positions by the
+        probability of containing a low-value card based on unaccounted distribution.
+        This makes subsequent swap decisions better-informed.
+        """
+        if not opponents:
+            return None
+
+        # Find the opponent with the lowest expected score (most dangerous)
+        best_opp = None
+        best_score = float('inf')
+        for opp in opponents:
+            unknown_pos = self.tracker.opponent_unknown_positions(opp.name)
+            if not unknown_pos:
+                continue
+            opp_score = self.tracker.expected_opponent_score(opp.name)
+            if opp_score < best_score:
+                best_score = opp_score
+                best_opp = opp
+
+        # Fallback: any opponent with unknowns
+        if best_opp is None:
+            for opp in opponents:
+                unknown_pos = self.tracker.opponent_unknown_positions(opp.name)
+                if unknown_pos:
+                    best_opp = opp
+                    break
+
+        if best_opp is None:
+            return None
+
+        unknown_pos = self.tracker.opponent_unknown_positions(best_opp.name)
+        if not unknown_pos:
+            return None
+
+        # Weight unknown positions: prefer positions more likely to hold low cards.
+        # In practice, all unknown positions have the same distribution (unaccounted),
+        # but positions adjacent to known-low cards or earlier positions (which
+        # players tend to peek first) are slightly more likely to be kept low.
+        # Use a simple heuristic: prefer positions not yet examined (truly unknown),
+        # and among those, prefer lower indices (dealt first, often peeked/managed).
+        target_pos = min(unknown_pos)
+
+        return {'type': 'peek_opponent', 'opponent': best_opp, 'position': target_pos}
+
     def _choose_jq_action(self, card, game, opponents):
-        """J/Q decision: self-swap, disruption swap, or skip."""
+        """J/Q decision: self-swap, disruption swap, or skip.
+
+        V2 improvement over V1: swap whenever a known target makes the trade
+        beneficial (even if worst_val < e_unknown + 1), and consider swapping
+        second-worst card when worst is already low.
+        """
         worst = self.tracker.worst_own_position()
         e_unknown = self.tracker.expected_value_of_unknown()
 
-        # Path 1: Self-swap if we have a bad card
         if worst is not None and opponents:
             worst_pos, worst_val = worst
-            if worst_pos < len(self.hand) and worst_val > e_unknown + 1:
+
+            if worst_pos >= len(self.hand):
+                pass
+            else:
+                # Path 1a: Check if any known target makes swap worthwhile
+                # regardless of e_unknown threshold
                 best_target = self._find_best_swap_target(opponents)
                 if best_target:
                     opp, opp_pos = best_target
-                    return {
-                        'type': 'blind_swap',
-                        'my_position': worst_pos,
-                        'opponent': opp,
-                        'opp_position': opp_pos,
-                    }
-                # Fallback: random opponent
-                opp = random.choice(opponents)
-                if opp.hand:
-                    opp_pos = random.randint(0, len(opp.hand) - 1)
-                    return {
-                        'type': 'blind_swap',
-                        'my_position': worst_pos,
-                        'opponent': opp,
-                        'opp_position': opp_pos,
-                    }
+                    target_card = self.tracker.opponent_hands[opp.name].get(opp_pos)
+                    if target_card is not None:
+                        target_val = tuple_value(target_card[0], target_card[1])
+                        # Swap if we'd improve our hand by at least 2 points
+                        if worst_val - target_val >= 2:
+                            return {
+                                'type': 'blind_swap',
+                                'my_position': worst_pos,
+                                'opponent': opp,
+                                'opp_position': opp_pos,
+                            }
 
-        # Path 2: Disruption swap if hand is already good
+                # Path 1b: Blind swap to unknown opponent positions when our
+                # worst card is significantly above average
+                if worst_val > e_unknown + 1:
+                    if best_target:
+                        opp, opp_pos = best_target
+                        return {
+                            'type': 'blind_swap',
+                            'my_position': worst_pos,
+                            'opponent': opp,
+                            'opp_position': opp_pos,
+                        }
+                    opp = random.choice(opponents)
+                    if opp.hand:
+                        opp_pos = random.randint(0, len(opp.hand) - 1)
+                        return {
+                            'type': 'blind_swap',
+                            'my_position': worst_pos,
+                            'opponent': opp,
+                            'opp_position': opp_pos,
+                        }
+
+                # Path 1c: In 1v1, use J/Q to swap moderately bad cards
+                # (value >= 5) with unknown opponent positions. This gamble
+                # has positive EV when our card is above average.
+                if len(opponents) == 1 and worst_val >= 5:
+                    opp = opponents[0]
+                    unknown_opp = self.tracker.opponent_unknown_positions(opp.name)
+                    if unknown_opp and opp.hand:
+                        opp_pos = min(unknown_opp)  # Prefer lower positions
+                        if opp_pos < len(opp.hand):
+                            return {
+                                'type': 'blind_swap',
+                                'my_position': worst_pos,
+                                'opponent': opp,
+                                'opp_position': opp_pos,
+                            }
+
+        # Path 2: Disruption swap if hand is already good (multi-player only)
         if worst is not None:
             _, worst_val = worst
         else:
@@ -256,7 +438,12 @@ class BayesianV2Agent(BayesianAgent):
         return None
 
     def _choose_black_king_action(self, card, game, opponents):
-        """Black King decision: info-gathering or disruption mode."""
+        """Black King decision: info-gathering or disruption mode.
+
+        In 1v1, always use Black King for intel + conditional swap. V2 targets
+        opponent positions most likely to have low cards (prefer lower indices
+        as players tend to manage early positions).
+        """
         worst = self.tracker.worst_own_position()
         e_unknown = self.tracker.expected_value_of_unknown()
 
@@ -271,7 +458,6 @@ class BayesianV2Agent(BayesianAgent):
 
         if hand_is_strong and len(opponents) >= 2:
             # Disruption mode: peek for intel, then swap two opponents' known positions
-            # Prefer peeking own unknown positions (self-intel is most valuable)
             me = game.players[game.players.index(self)] if self in game.players else None
             peek_target = self._find_best_peek_target_any(me, opponents)
             disruption = self._find_best_disruption_swap(opponents)
@@ -289,19 +475,29 @@ class BayesianV2Agent(BayesianAgent):
                         'position2': pos2,
                     },
                 }
-            # Fall through to info-gathering mode if no disruption available
 
         # Info-gathering mode: peek opponent, swap self↔opponent if beneficial
-        if worst_pos < len(self.hand) and worst_val > e_unknown - 2 and opponents:
+        # Always try (even with moderate hand) since Black King peek is free info
+        if worst_pos < len(self.hand) and opponents:
             best_opp = None
             target_pos = None
-            most_unknowns = -1
+
             for opp in opponents:
                 unknown_pos = self.tracker.opponent_unknown_positions(opp.name)
-                if len(unknown_pos) > most_unknowns:
-                    most_unknowns = len(unknown_pos)
+                if unknown_pos:
                     best_opp = opp
-                    target_pos = random.choice(unknown_pos) if unknown_pos else None
+                    # Prefer lower indices: players manage positions 0-1 first,
+                    # so these are more likely to have been kept/made low
+                    target_pos = min(unknown_pos)
+                    break
+
+            # Fallback to any opponent with positions
+            if best_opp is None:
+                for opp in opponents:
+                    if opp.hand:
+                        best_opp = opp
+                        target_pos = 0 if 0 < len(opp.hand) else None
+                        break
 
             if best_opp and target_pos is not None:
                 return {

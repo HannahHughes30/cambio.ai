@@ -479,6 +479,7 @@ class TestCallCambio:
         agent.hand = [Card('5', 'Hearts'), Card('6', 'Spades'), Card('3', 'Clubs'), Card('4', 'Diamonds')]
         agent.known = {0: agent.hand[0], 1: agent.hand[1]}  # Only know 2 of 4
         agent.tracker.initialize(agent.known, 4, ['Opp'])
+        agent._initialized = True
         # Known score = 5+6=11, unknowns ~5.4 each, total ~21.8
         # Opponent expected ~21.6 — no margin, so neither path triggers
         assert agent.call_cambio() is False
@@ -488,6 +489,7 @@ class TestCallCambio:
         agent.hand = [Card('A', 'Hearts'), Card('A', 'Spades'), Card('A', 'Diamonds'), Card('A', 'Clubs')]
         agent.known = {0: agent.hand[0], 1: agent.hand[1], 2: agent.hand[2], 3: agent.hand[3]}
         agent.tracker.initialize(agent.known, 4, ['Opp'])
+        agent._initialized = True
         # Score = 4, E[opp] ~= 4 * E[unknown] which should be much higher
         assert agent.call_cambio() is True
 
@@ -496,6 +498,7 @@ class TestCallCambio:
         agent.hand = [Card('A', 'Hearts'), Card('2', 'Spades'), Card('3', 'Clubs'), Card('2', 'Diamonds')]
         agent.known = {0: agent.hand[0], 1: agent.hand[1], 2: agent.hand[2], 3: agent.hand[3]}
         agent.tracker.initialize(agent.known, 4, ['Opp'])
+        agent._initialized = True
         # Score = 8. Set opponent known cards to be low too
         agent.tracker.set_opponent_card('Opp', 0, ('A', 'Clubs'))
         agent.tracker.set_opponent_card('Opp', 1, ('2', 'Hearts'))
@@ -510,6 +513,7 @@ class TestCallCambio:
         agent.hand = [Card('A', 'Hearts'), Card('A', 'Spades'), Card('2', 'Diamonds'), Card('2', 'Clubs')]
         agent.known = {0: agent.hand[0], 1: agent.hand[1], 2: agent.hand[2], 3: agent.hand[3]}
         agent.tracker.initialize(agent.known, 4, ['Opp'])
+        agent._initialized = True
         # Score = 6
         # Set all opponent cards known (high values)
         agent.tracker.set_opponent_card('Opp', 0, ('8', 'Hearts'))

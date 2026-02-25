@@ -363,6 +363,10 @@ class BayesianAgent(Player):
           (a) High-confidence: know nearly all cards + score is good + margin over opponents
           (b) EV dominance: even with unknowns, expected score is far ahead of all opponents
         """
+        # Guard: can't make informed decisions before tracker is initialized
+        if not self._initialized:
+            return False
+
         known_count = self.tracker.own_known_count()
         hand_size = len(self.hand)
         my_expected = self.tracker.expected_own_score()
