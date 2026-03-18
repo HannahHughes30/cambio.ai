@@ -8,7 +8,7 @@ This is a project for CSC 480 at Cal Poly, instructed by Dr. Rodrigo Canaan.
 - Nas Ahmed
 - Juan E. Cisneros
 
-# External Resources
+## External Resources
 - Aguirre and Nico, ”Cambio Card Game Rules,” cambiocardgame.com. [Online]. Available: https://cambiocardgame.com/ Accessed: Jan. 21, 2026.
 - A. Raffin et al., ”Stable-Baselines3: Reliable Reinforcement Learning Implementations,” Journal of Machine Learning Research, vol. 22, no. 268, pp. 1–8, 2021.
 - A. Wu, ”How to Play Cambio (the Card Game): Rules, Strategies & More,” wikiHow, Sept. 2025. [Online]. Available: https://www.wikihow.com/Cambio-Card-Game Accessed: Jan. 21, 2026.
