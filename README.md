@@ -22,8 +22,7 @@ This is a project for CSC 480 at Cal Poly, instructed by Dr. Rodrigo Canaan.
 - `game/` - Game simulator
 - `agents/` - AI agent implementations
 - `tests/` - Unit tests
-- `notebooks/` - Jupyter notebooks for experiments
-- `docs/` - Documentation
+- `scenarios/` - Graphs and Tables
 
 ## Setup
 ```bash
