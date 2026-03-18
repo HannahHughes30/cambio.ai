@@ -88,6 +88,7 @@ def build_player_view(game, viewing_player):
 
 def build_game_over_view(game, results):
     """Return full reveal for game over screen."""
+    caller_name = results['cambio_caller']
     players = []
     for p in game.players:
         hand = []
@@ -99,10 +100,16 @@ def build_game_over_view(game, results):
                 'suit': card.suit,
                 'value': card.get_value(),
             })
+        raw_score = game.calculate_score(p)
+        final_score = results['scores'][p.name]
+        penalty = final_score - raw_score  # +10, -10, or 0
         players.append({
             'name': p.name,
             'hand': hand,
-            'score': results['scores'][p.name],
+            'score': final_score,
+            'raw_score': raw_score,
+            'penalty': penalty,
+            'is_caller': p.name == caller_name,
         })
 
     return {

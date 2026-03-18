@@ -461,12 +461,22 @@ function renderGameOver(data) {
     data.players.forEach(p => {
         const isWinner = p.name === data.winner;
         html += `<div class="go-player ${isWinner ? 'go-winner-row' : ''}">`;
-        html += `<div class="go-player-header"><span class="go-pname">${p.name}</span><span class="go-pscore">${p.score} pts</span></div>`;
+        let nameLabel = p.name;
+        if (p.is_caller) nameLabel += ' (called Cambio)';
+        html += `<div class="go-player-header"><span class="go-pname">${nameLabel}</span><span class="go-pscore">${p.score} pts</span></div>`;
         html += '<div class="go-cards">';
         p.hand.forEach(c => {
             html += `<div class="card card-face card-sm ${getSuitClass(c.suit)}">${buildCardInner(c.rank, c.suit)}</div>`;
         });
-        html += '</div></div>';
+        html += '</div>';
+        html += `<div class="go-score-breakdown">Hand: ${p.raw_score} pts`;
+        if (p.penalty > 0) {
+            html += `<br>Cambio penalty: +${p.penalty}`;
+        } else if (p.penalty < 0) {
+            html += `<br>Cambio bonus: ${p.penalty}`;
+        }
+        html += `</div>`;
+        html += '</div>';
     });
     html += '</div>';
     results.innerHTML = html;
