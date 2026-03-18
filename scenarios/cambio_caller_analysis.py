@@ -3,7 +3,7 @@
 import argparse
 from collections import defaultdict
 
-from simulation import Tournament
+from .simulation import Tournament
 
 # --- Configurations to test ---
 # Each entry: (label, agent_configs)

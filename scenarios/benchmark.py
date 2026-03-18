@@ -2,7 +2,7 @@
 
 import argparse
 
-from simulation import Tournament, compute_round_stats, aggregate_round_stats
+from scenarios.simulation import Tournament, compute_round_stats, aggregate_round_stats
 
 
 MATCHUPS = [

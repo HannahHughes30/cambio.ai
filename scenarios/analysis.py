@@ -10,7 +10,7 @@ import argparse
 import statistics
 from collections import Counter, defaultdict
 
-from simulation import Tournament, Match, compute_round_stats, create_agent, AGENT_REGISTRY
+from scenarios.simulation import Tournament, Match, compute_round_stats, create_agent, AGENT_REGISTRY
 
 
 # ---------------------------------------------------------------------------

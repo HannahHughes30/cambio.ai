@@ -7,7 +7,7 @@ and comparing in both 1v1 and 3-player settings.
 import argparse
 from collections import defaultdict
 
-from simulation import Tournament
+from scenarios.simulation import Tournament
 
 NUM_MATCHES = 100
 POINT_LIMIT = 100

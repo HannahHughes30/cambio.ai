@@ -9,7 +9,7 @@ import os
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from simulation import Tournament
+from .simulation import Tournament
 
 POINT_LIMIT = 100
 

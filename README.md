@@ -1,12 +1,14 @@
 # Cambio AI Agent
 
-AI agent that learns to play Cambio card game using Reinforcement Learning.
+AI agent that learns to play Cambio card game using Reinforcement Learning. 
 This is a project for CSC 480 at Cal Poly, instructed by Dr. Rodrigo Canaan.
 
 ## Team
 - Hannah Hughes
 - Nas Ahmed
 - Juan E. Cisneros
+
+## [Demo](https://youtu.be/EUgMqFQlNdI)
 
 ## External Resources
 - Aguirre and Nico, ”Cambio Card Game Rules,” cambiocardgame.com. [Online]. Available: https://cambiocardgame.com/ Accessed: Jan. 21, 2026.
@@ -19,11 +21,10 @@ This is a project for CSC 480 at Cal Poly, instructed by Dr. Rodrigo Canaan.
 - R. Sutton and A. Barto, Reinforcement Learning: An Introduction, 2nd ed. MIT Press, 2018.
 
 ## Project Structure
-- `game/` - Game simulator
 - `agents/` - AI agent implementations
 - `tests/` - Unit tests
-- `notebooks/` - Jupyter notebooks for experiments
-- `docs/` - Documentation
+- `scenarios/` - Graphs and Tables
+- `web/` - Web-based interface
 
 ## Setup
 ```bash
@@ -31,6 +32,16 @@ pip install -r requirements.txt
 ```
 
 ## Run
+To play against the agents:
 ```bash
-python -m game.simulator
+python run_web.py
 ```
+
+To test the actions of the agents:
+```bash
+python -m tests.[agent_name]
+```
+
+To view results of agent performance:
+```bash
+python -m scenarios.[file_name]
