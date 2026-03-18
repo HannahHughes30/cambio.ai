@@ -1,6 +1,7 @@
 """Simulation system for running Cambio matches and tournaments between agents."""
 
 import argparse
+import random
 import statistics
 from collections import Counter, defaultdict
 
@@ -154,10 +155,12 @@ class Match:
         rounds_played = 0
 
         while True:
-            # Fresh agents each round
+            # Fresh agents each round with randomized seating order
+            configs_shuffled = list(self.agent_configs)
+            random.shuffle(configs_shuffled)
             agents = [
                 create_agent(cfg['type'], cfg['name'], **cfg.get('kwargs', {}))
-                for cfg in self.agent_configs
+                for cfg in configs_shuffled
             ]
 
             game = CambioGame(agents)

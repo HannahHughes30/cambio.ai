@@ -126,6 +126,9 @@ class Player:
                 peeked = peek_player.hand[peek_pos]
                 if verbose:
                     print(f"  {self.name} used Black {card} to see {peek_player.name}'s position {peek_pos}: {peeked}")
+                # Update known if peeking at own card
+                if peek_player is self:
+                    game.peek(self, peek_pos)
                 # Third-party swap path
                 if opponent and player2 and opp_pos is not None and pos2 is not None:
                     if 0 <= opp_pos < len(opponent.hand) and 0 <= pos2 < len(player2.hand):
