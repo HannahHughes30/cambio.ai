@@ -571,6 +571,13 @@ button:disabled { opacity: 0.35; cursor: not-allowed; transform: none; filter: n
     flex-wrap: wrap;
 }
 
+.go-score-breakdown {
+    margin-top: 6px;
+    font-size: 11px;
+    color: #8b949e;
+    line-height: 1.4;
+}
+
 .go-buttons {
     display: flex;
     gap: 10px;

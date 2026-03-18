@@ -59,7 +59,13 @@ class GameManager:
                 human_urls[pid] = f'/game/{pid}'
             else:
                 cls = AGENT_REGISTRY[info['type']]
-                agent = cls(name=info['name'])
+                # Auto-select preset for V2 based on table size
+                num_players = len(self.lobby_players)
+                if cls.__name__ == 'BayesianV2Agent':
+                    preset = 'duel' if num_players == 2 else 'multi'
+                    agent = cls(name=info['name'], preset=preset)
+                else:
+                    agent = cls(name=info['name'])
                 players.append(agent)
 
         self.game = CambioGame(players)
