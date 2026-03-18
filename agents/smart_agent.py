@@ -67,6 +67,17 @@ class SmartAgent(Player):
             
         return False
 
+    def choose_stick(self, game):
+        """Stick known cards that match the discard top rank."""
+        if not game.discard:
+            return []
+        top_rank = game.discard[-1].rank
+        positions = []
+        for pos, card in self.known.items():
+            if pos < len(self.hand) and card.rank == top_rank:
+                positions.append(pos)
+        return positions
+
     def observe_turn(self, turn_data, game):
         self.opponent_hand_size = sum(len(p.hand) for p in game.players if p.name != self.name)
 
@@ -96,7 +107,7 @@ class SmartAgent(Player):
         # King Swap: Swap your worst known card with opponent's best known card
         elif card.rank == 'K' and card.suit in ['Spades', 'Clubs']:
             worst_pos = self._find_worst_known_position()
-            best_opp_card_pos, target_opp = self._find_best_opp_card_pos(opponents)
+            best_opp_card_pos, target_opp = self._find_best_opp_card_pos(game, opponents)
             if worst_pos is not None and opponents and opponents[0].hand and best_opp_card_pos is not None:
                 return {
                     'type': 'king_swap',
@@ -126,15 +137,28 @@ class SmartAgent(Player):
 
         return worst_pos
     
-    def _find_best_opp_card_pos(self, opponents):
+    def _find_best_opp_card_pos(self, game, opponents):
+        """Find the opponent position with the lowest known card value.
+
+        Only uses cards this agent has legitimately observed (stored in
+        self.opponent_known via peek abilities), not the opponent's private
+        known dict.
+        """
         best_pos = None
         best_value = 1000
         target_opp = None
-        for opp in opponents:
-            for pos, card in opp.known.items():
-                val = card.get_value()
-                if val < best_value:
-                    best_value = val
-                    best_pos = pos
-                    target_opp = opp
+        for opp_id, opp_cards in self.opponent_known.items():
+            # Map player index back to the Player object
+            if opp_id >= len(game.players):
+                continue
+            opp = game.players[opp_id]
+            if opp not in opponents:
+                continue
+            for pos, card in opp_cards.items():
+                if pos < len(opp.hand):
+                    val = card.get_value()
+                    if val < best_value:
+                        best_value = val
+                        best_pos = pos
+                        target_opp = opp
         return best_pos, target_opp

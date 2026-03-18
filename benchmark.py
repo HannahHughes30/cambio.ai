@@ -75,6 +75,43 @@ MATCHUPS = [
             {'type': 'smart', 'name': 'Smart'},
         ],
     },
+    # --- 4 players ---
+    {
+        'name': '3xSmart + BayesianV2 (4p)',
+        'configs': [
+            {'type': 'smart', 'name': 'Smart-1'},
+            {'type': 'smart', 'name': 'Smart-2'},
+            {'type': 'smart', 'name': 'Smart-3'},
+            {'type': 'bayesian_v2', 'name': 'BayesV2'},
+        ],
+    },
+    {
+        'name': 'BayesV1 + BayesV2 + 2xSmart (4p)',
+        'configs': [
+            {'type': 'bayesian', 'name': 'BayesV1'},
+            {'type': 'bayesian_v2', 'name': 'BayesV2'},
+            {'type': 'smart', 'name': 'Smart-1'},
+            {'type': 'smart', 'name': 'Smart-2'},
+        ],
+    },
+    {
+        'name': 'BayesV2 + Smart + Base + BayesV1 (4p)',
+        'configs': [
+            {'type': 'bayesian_v2', 'name': 'BayesV2'},
+            {'type': 'smart', 'name': 'Smart'},
+            {'type': 'base', 'name': 'Base'},
+            {'type': 'bayesian', 'name': 'BayesV1'},
+        ],
+    },
+    {
+        'name': '3xSmart + Bayesian (4p)',
+        'configs': [
+            {'type': 'smart', 'name': 'Smart-1'},
+            {'type': 'smart', 'name': 'Smart-2'},
+            {'type': 'smart', 'name': 'Smart-3'},
+            {'type': 'bayesian', 'name': 'Bayesian'},
+        ],
+    },
     # --- 6 players ---
     {
         'name': '5xSmart + Bayesian (6p)',

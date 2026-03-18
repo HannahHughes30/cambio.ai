@@ -214,21 +214,38 @@ class TestChooseDraw:
         assert choice == 'discard'
 
     def test_skips_moderate_discard(self):
-        """Tighter threshold: value=1 (Ace) no longer auto-taken from discard."""
+        """When no position improves by ≥1, should skip discard."""
         agent = BayesianAgent("Bayes")
         opp = SmartAgent("Opp")
         game = make_game(agent, opp)
         agent._ensure_initialized(game)
 
-        # Give agent all low cards so improvement isn't >= 3
-        agent.hand = [Card('A', 'Hearts'), Card('2', 'Spades'), Card('3', 'Clubs'), Card('A', 'Diamonds')]
+        # All Aces: improvement from taking another Ace = 0 (< 1 → skip)
+        agent.hand = [Card('A', 'Hearts'), Card('A', 'Spades'), Card('A', 'Clubs'), Card('A', 'Diamonds')]
         agent.known = {0: agent.hand[0], 1: agent.hand[1], 2: agent.hand[2], 3: agent.hand[3]}
         for pos, card in agent.known.items():
             agent.tracker.set_own_card(pos, (card.rank, card.suit))
 
-        game.discard.append(Card('A', 'Spades'))  # value 1, small improvement
+        game.discard.append(Card('A', 'Spades'))  # value 1, zero improvement
         choice = agent.choose_draw(game)
         assert choice == 'deck'
+
+    def test_takes_discard_with_small_improvement(self):
+        """Improvement of 1 (threshold) should take from discard."""
+        agent = BayesianAgent("Bayes")
+        opp = SmartAgent("Opp")
+        game = make_game(agent, opp)
+        agent._ensure_initialized(game)
+
+        # Hand has a 2 at pos 1; Ace on discard gives improvement = 2-1 = 1
+        agent.hand = [Card('A', 'Hearts'), Card('2', 'Spades'), Card('A', 'Clubs'), Card('A', 'Diamonds')]
+        agent.known = {0: agent.hand[0], 1: agent.hand[1], 2: agent.hand[2], 3: agent.hand[3]}
+        for pos, card in agent.known.items():
+            agent.tracker.set_own_card(pos, (card.rank, card.suit))
+
+        game.discard.append(Card('A', 'Spades'))  # value 1, improvement = 1 at pos 1
+        choice = agent.choose_draw(game)
+        assert choice == 'discard'
 
     def test_skips_high_discard(self):
         agent = BayesianAgent("Bayes")

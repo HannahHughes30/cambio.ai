@@ -19,43 +19,120 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from agents.bayesian_agent import BayesianAgent
 from agents.card_tracker import card_to_tuple, tuple_value
 
-# Max disruption bonus (scaled down by 1/num_opponents for 1v1)
-DISRUPTION_BONUS_MAX = 3
-# Threshold: if our worst known card value is at or below this, hand is "good enough"
-# to consider disruption-only moves instead of self-improving swaps
-GOOD_HAND_THRESHOLD = 5
-# EV threshold for probabilistic sticking: stick if EV(stick) > this
-STICK_EV_THRESHOLD = 2.0
+# Grid-search-optimized parameter presets by table size.
+# Tuned against mixed opponents (Smart + V1 + Base), 100 matches each.
+PRESETS = {
+    'duel': {  # 1v1 optimal (vs Smart)
+        'stick_ev_threshold': 1.5,
+        'cambio_aggressive_threshold': 7,
+        'cambio_margin': 4,
+        'cambio_knowledge_gap': 1,
+        'cambio_threshold': 9,
+        'ev_dominance_margin': 12,
+        'disruption_bonus_max': 4,
+        'good_hand_threshold': 2,
+        'info_bonus_max_value': 1,
+        'small_deck_threshold': 8,
+        'jq_swap_improvement': 1,
+    },
+    'multi': {  # 4p optimal (vs Smart + V1 + Base)
+        'stick_ev_threshold': 2.0,
+        'cambio_aggressive_threshold': 5,
+        'cambio_margin': 5,
+        'cambio_knowledge_gap': 0,
+        'cambio_threshold': 8,
+        'ev_dominance_margin': 10,
+        'disruption_bonus_max': 0.5,
+        'good_hand_threshold': 8,
+        'info_bonus_max_value': 1,
+        'small_deck_threshold': 8,
+        'jq_swap_improvement': 4,
+    },
+}
 
 
 class BayesianV2Agent(BayesianAgent):
     """Bayesian agent with disruption-aware swap targeting."""
 
     def __init__(self, name="BayesianV2Agent", discard_threshold=None,
-                 cambio_threshold=10, cambio_margin=3, cambio_knowledge_gap=2,
-                 ev_dominance_margin=8, stick_ev_threshold=STICK_EV_THRESHOLD):
+                 cambio_threshold=10, cambio_margin=2, cambio_knowledge_gap=1,
+                 ev_dominance_margin=8, stick_ev_threshold=2.5,
+                 cambio_aggressive_threshold=8,
+                 use_disruption_scoring=True, use_probabilistic_stick=True,
+                 use_preemptive_cambio=False, use_third_party_swaps=True,
+                 use_smart_peek=True, use_aggressive_cambio=True,
+                 use_final_round_mode=True, use_opponent_inference=True,
+                 use_deck_awareness=True,
+                 disruption_bonus_max=3, good_hand_threshold=5,
+                 info_bonus_max_value=3, small_deck_threshold=5,
+                 jq_swap_improvement=2,
+                 preset=None):
+        # Apply preset overrides (preset values are overridden by explicit kwargs)
+        if preset and preset in PRESETS:
+            p = PRESETS[preset]
+            cambio_threshold = p.get('cambio_threshold', cambio_threshold)
+            cambio_margin = p.get('cambio_margin', cambio_margin)
+            cambio_knowledge_gap = p.get('cambio_knowledge_gap', cambio_knowledge_gap)
+            ev_dominance_margin = p.get('ev_dominance_margin', ev_dominance_margin)
+            stick_ev_threshold = p.get('stick_ev_threshold', stick_ev_threshold)
+            cambio_aggressive_threshold = p.get('cambio_aggressive_threshold', cambio_aggressive_threshold)
+            disruption_bonus_max = p.get('disruption_bonus_max', disruption_bonus_max)
+            good_hand_threshold = p.get('good_hand_threshold', good_hand_threshold)
+            info_bonus_max_value = p.get('info_bonus_max_value', info_bonus_max_value)
+            small_deck_threshold = p.get('small_deck_threshold', small_deck_threshold)
+            jq_swap_improvement = p.get('jq_swap_improvement', jq_swap_improvement)
+
         super().__init__(name=name, discard_threshold=discard_threshold,
                          cambio_threshold=cambio_threshold, cambio_margin=cambio_margin,
                          cambio_knowledge_gap=cambio_knowledge_gap,
                          ev_dominance_margin=ev_dominance_margin)
         self.stick_ev_threshold = stick_ev_threshold
+        self.cambio_aggressive_threshold = cambio_aggressive_threshold
+        # Ablation feature flags (all True for full V2 behavior)
+        self.use_disruption_scoring = use_disruption_scoring
+        self.use_probabilistic_stick = use_probabilistic_stick
+        self.use_preemptive_cambio = use_preemptive_cambio
+        self.use_third_party_swaps = use_third_party_swaps
+        self.use_smart_peek = use_smart_peek
+        self.use_aggressive_cambio = use_aggressive_cambio
+        # New feature flags
+        self.use_final_round_mode = use_final_round_mode
+        self.use_opponent_inference = use_opponent_inference
+        self.use_deck_awareness = use_deck_awareness
+        # Tunable thresholds (previously hardcoded)
+        self.disruption_bonus_max = disruption_bonus_max
+        self.good_hand_threshold = good_hand_threshold
+        self.info_bonus_max_value = info_bonus_max_value
+        self.small_deck_threshold = small_deck_threshold
+        self.jq_swap_improvement = jq_swap_improvement
+        self._last_game = None
 
     def _ensure_initialized(self, game):
         """Extend parent init to set up opponent self-knowledge."""
         was_initialized = self._initialized
         super()._ensure_initialized(game)
+        self._last_game = game  # Always keep game reference current
         if not was_initialized and self._initialized:
             for p in game.players:
                 if p.name != self.name:
                     self.tracker.init_opponent_self_knowledge(p.name)
 
     # ------------------------------------------------------------------
-    # Observation — track opponent self-knowledge
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _is_final_round(self, game):
+        """Check if we're in the final round (someone called Cambio)."""
+        return self.use_final_round_mode and getattr(game, 'final_round_active', False)
+
+    # ------------------------------------------------------------------
+    # Observation — track opponent self-knowledge + action inference
     # ------------------------------------------------------------------
 
     def observe_turn(self, turn_data, game):
         """Call parent observe_turn, then update opponent self-knowledge."""
         super().observe_turn(turn_data, game)
+        self._last_game = game  # Keep game ref current for call_cambio
 
         acting = turn_data['player']
         if acting == self.name:
@@ -117,6 +194,28 @@ class BayesianV2Agent(BayesianAgent):
             if swap_position is not None:
                 self.tracker.opponent_loses_knowledge(acting, swap_position)
 
+        # --- Opponent action inference (Step 2) ---
+        if self.use_opponent_inference:
+            draw_source = turn_data.get('draw_source')
+
+            # 2a: Opponent drew from deck and discarded (didn't swap) →
+            # all their cards are likely <= discarded value
+            if draw_source == 'deck' and action == 'discard':
+                discarded_value = turn_data.get('discarded_value')
+                if discarded_value is not None:
+                    self.tracker.set_opponent_hand_upper_bound(acting, discarded_value)
+
+            # 2b: Opponent peeked own card (7/8 power) and kept it →
+            # that position is likely low-value
+            if power_type == 'peek_own':
+                peek_pos = turn_data.get('power_peek_position')
+                if peek_pos is None:
+                    # For peek_own, the position might be in different fields
+                    # depending on engine version. Try swap_position as fallback.
+                    peek_pos = turn_data.get('swap_position')
+                if peek_pos is not None:
+                    self.tracker.add_opponent_peeked_and_kept(acting, peek_pos)
+
     # ------------------------------------------------------------------
     # Probabilistic stick play (Priority 1)
     # ------------------------------------------------------------------
@@ -128,6 +227,9 @@ class BayesianV2Agent(BayesianAgent):
             P(match) = count_of_rank_in_unaccounted / total_unaccounted
             EV(stick) = P(match) * card_value_at_pos - (1 - P(match)) * E[penalty]
         Stick if EV(stick) > stick_ev_threshold.
+
+        Final-round mode: only stick known matches (no probabilistic sticks).
+        A failed stick adds a penalty card that directly hurts our final score.
         """
         if not game.discard:
             return []
@@ -141,7 +243,14 @@ class BayesianV2Agent(BayesianAgent):
             if card is not None and card[0] == top_rank:
                 positions.append(pos)
 
-        # Probabilistic sticks for unknown positions
+        # Final round: only known matches — probabilistic sticks are too risky
+        if self._is_final_round(game):
+            return positions
+
+        # Probabilistic sticks for unknown positions (ablation-gated)
+        if not self.use_probabilistic_stick:
+            return positions
+
         unaccounted = self.tracker.unaccounted_cards()
         total_unaccounted = len(unaccounted)
         if total_unaccounted > 0:
@@ -163,39 +272,254 @@ class BayesianV2Agent(BayesianAgent):
         return positions
 
     # ------------------------------------------------------------------
+    # Smarter draw decision (deck EV comparison)
+    # ------------------------------------------------------------------
+
+    def choose_draw(self, game):
+        """Improved draw: compare discard improvement vs expected deck improvement.
+
+        Drawing from deck has two advantages V1 ignores:
+        1. If the deck card is bad, we can discard it and potentially trigger a power.
+        2. The deck may contain many cards better than the discard option.
+
+        We compute E[improvement from deck] and only take the discard when it
+        clearly beats the deck's expected value.
+
+        Final-round mode: lower improvement threshold to 0 (any improvement is
+        worth it since there's no future to optimize for).
+
+        Deck awareness: prefer discard when deck is very small (<=5 cards).
+        """
+        self._ensure_initialized(game)
+        self._last_game = game  # Store for choose_action's final-round check
+
+        if not game.discard:
+            return 'deck'
+
+        discard_value = game.discard[-1].get_value()
+
+        # Joker (0) or Red King (-1) are always worth taking
+        if discard_value <= 0:
+            return 'discard'
+
+        # Find best improvement from discard card
+        worst_ev = 0
+        for pos in self.tracker.own_hand:
+            current_ev = self.tracker.expected_value_at_position(pos)
+            if current_ev > worst_ev:
+                worst_ev = current_ev
+
+        discard_improvement = worst_ev - discard_value
+
+        # Final round: take any improvement (threshold 0 instead of 1)
+        if self._is_final_round(game):
+            if discard_improvement > 0:
+                return 'discard'
+            return 'deck'
+
+        # Deck awareness: small deck favors known discard over risky draw
+        deck_size = len(game.deck.cards) if self.use_deck_awareness else 999
+        if self.use_deck_awareness and deck_size <= self.small_deck_threshold and discard_improvement > 0:
+            return 'discard'
+
+        # Compute expected improvement from a random deck draw
+        unaccounted = self.tracker.unaccounted_cards()
+        if not unaccounted:
+            # No info — fall back to V1 logic
+            return 'discard' if discard_improvement >= 1 else 'deck'
+
+        # For each possible deck card, the improvement is max(0, worst_ev - card_value)
+        # Plus a power bonus: if we draw a power card and don't swap, we get info
+        deck_improvements = []
+        for rank, suit in unaccounted:
+            val = tuple_value(rank, suit)
+            improvement = max(0, worst_ev - val)
+            # Power card bonus: 7/8 peek own (~1 pt info value), 9/10 peek opp (~0.5),
+            # J/Q swap (~1 if we have a bad card), Black K (~1.5 for peek+swap)
+            power_bonus = 0
+            if rank in ['7', '8']:
+                power_bonus = 1.0
+            elif rank in ['9', '10']:
+                power_bonus = 0.5
+            elif rank in ['J', 'Q']:
+                power_bonus = 1.0
+            elif rank == 'K' and suit in ['Spades', 'Clubs']:
+                power_bonus = 1.5
+            # If we wouldn't swap this card, we get the power instead
+            if improvement == 0:
+                deck_improvements.append(power_bonus)
+            else:
+                deck_improvements.append(improvement)
+
+        expected_deck_improvement = sum(deck_improvements) / len(deck_improvements)
+
+        # Take from discard only when it clearly beats the deck
+        if discard_improvement >= 1 and discard_improvement >= expected_deck_improvement:
+            return 'discard'
+
+        return 'deck'
+
+    # ------------------------------------------------------------------
+    # Stick-chain and anti-stick swap scoring
+    # ------------------------------------------------------------------
+
+    def choose_action(self, drawn_card, game=None):
+        """Swap with stick-chain bonus and anti-stick penalty.
+
+        Beyond V1's improvement + info_bonus, V2 adds:
+        - Stick-chain bonus: if displacing a card creates sticking opportunities
+          (we have OTHER known cards of the same rank), add those cards' values.
+        - Anti-stick penalty: if displacing a common rank that opponents likely
+          have, penalize (they'll stick and shrink their hands).
+
+        Final-round mode: more aggressive swaps — swap into unknown positions
+        even with moderate improvement since reducing unknowns has no future
+        value but reducing score does.
+        """
+        drawn_value = drawn_card.get_value()
+
+        # Detect final round from the game object stored during choose_draw
+        final_round = (self.use_final_round_mode
+                       and hasattr(self, '_last_game')
+                       and self._last_game is not None
+                       and self._last_game.final_round_active)
+
+        best_pos = None
+        best_score = 0  # Must be positive to swap
+
+        for pos in self.tracker.own_hand:
+            if pos >= len(self.hand):
+                continue
+            current_ev = self.tracker.expected_value_at_position(pos)
+            improvement = current_ev - drawn_value
+
+            # Info bonus (same as V1)
+            is_unknown = self.tracker.own_hand.get(pos) is None
+            info_bonus = 0
+            if is_unknown and drawn_value <= self.info_bonus_max_value:
+                info_bonus = 1
+
+            # Final round: boost info bonus for unknowns and lower swap bar
+            if final_round and is_unknown and improvement > -2:
+                info_bonus = max(info_bonus, 2)
+
+            # Stick-chain bonus: if we displace this card, does its rank match
+            # any OTHER known cards in our hand? If so, we can stick them.
+            stick_chain_bonus = 0
+            displaced_card = self.tracker.own_hand.get(pos)
+            if displaced_card is not None:
+                displaced_rank = displaced_card[0]
+                for other_pos, other_card in self.tracker.own_hand.items():
+                    if other_pos != pos and other_card is not None and other_card[0] == displaced_rank:
+                        stick_chain_bonus += tuple_value(other_card[0], other_card[1])
+
+            # Anti-stick penalty: if displaced rank is common in unaccounted cards,
+            # opponents may have matches and stick (reducing their hand size).
+            anti_stick_penalty = 0
+            if displaced_card is not None:
+                displaced_rank = displaced_card[0]
+                # Check how many of this rank opponents are known to have
+                for name, opp_hand in self.tracker.opponent_hands.items():
+                    for opp_pos, opp_card in opp_hand.items():
+                        if opp_card is not None and opp_card[0] == displaced_rank:
+                            anti_stick_penalty += 0.5
+
+            score = improvement + info_bonus + stick_chain_bonus - anti_stick_penalty
+            if score > best_score:
+                best_score = score
+                best_pos = pos
+
+        if best_pos is not None and best_score > 0:
+            return {'type': 'swap', 'position': best_pos}
+
+        return {'type': 'discard'}
+
+    # ------------------------------------------------------------------
     # Improved cambio timing (Priority 2)
     # ------------------------------------------------------------------
 
     def call_cambio(self):
         """Enhanced cambio: aggressive call with excellent known hand,
-        plus opponent-knowledge-aware preemption."""
+        plus opponent-knowledge-aware preemption.
+
+        Cambio parameters scale with opponent count: calling Cambio with
+        many opponents is riskier (more chances someone beats you), so
+        we widen the margin and knowledge requirements.
+
+        Final-round suppression: if someone already called Cambio, return False.
+        Deck awareness: if deck is very small and we're ahead, call early.
+        """
         if not self._initialized:
             return False
+
+        # Final-round suppression: can't call Cambio twice
+        if self.use_final_round_mode and hasattr(self, '_last_game') and self._last_game is not None:
+            if self._last_game.cambio_called:
+                return False
 
         known_count = self.tracker.own_known_count()
         hand_size = len(self.hand)
         my_expected = self.tracker.expected_own_score()
 
-        # Aggressive call: know all cards and score is excellent
-        # V1 requires score < 8 for this path; V2 lowers to 6
-        if known_count == hand_size and my_expected <= 6:
-            return True
+        # Scale conservatism with opponent count
+        num_opps = len(self.tracker.opponent_hand_sizes)
+        # Extra margin per additional opponent beyond the first
+        opp_scaling = max(0, num_opps - 1)
 
-        # Preemptive call: if we detect opponent is ready to call,
-        # call first ONLY if we have strong margin
-        for name in self.tracker.opponent_hand_sizes:
-            opp_knowledge = self.tracker.get_opponent_self_knowledge(name)
-            opp_hand_size = self.tracker.opponent_hand_sizes[name]
-            # Opponent knows all or nearly all their cards
-            if len(opp_knowledge) >= opp_hand_size:
-                opp_expected = self.tracker.expected_opponent_score(name)
-                # Only preempt with strong advantage and high confidence
-                if (known_count >= hand_size - self.cambio_knowledge_gap
-                        and my_expected < self.cambio_threshold
-                        and my_expected < opp_expected - 2):
+        # Deck awareness: if deck is very small, consider calling early
+        if self.use_deck_awareness and hasattr(self, '_last_game') and self._last_game is not None:
+            deck_size = len(self._last_game.deck.cards)
+            if deck_size <= self.small_deck_threshold and known_count >= hand_size - 1:
+                # Deck nearly exhausted — reshuffle increases variance.
+                # Call if we're ahead of all opponents.
+                all_ahead = True
+                for name in self.tracker.opponent_hand_sizes:
+                    opp_expected = self._get_opponent_expected(name)
+                    if my_expected >= opp_expected:
+                        all_ahead = False
+                        break
+                if all_ahead and my_expected < self.cambio_threshold:
                     return True
 
-        return super().call_cambio()
+        # Aggressive call: know all cards and score is excellent
+        # V1 requires score < 8 for this path; V2 lowers to 3 (ablation-gated)
+        # But widen threshold with more opponents
+        if self.use_aggressive_cambio:
+            scaled_threshold = self.cambio_aggressive_threshold + opp_scaling
+            if known_count == hand_size and my_expected <= scaled_threshold:
+                return True
+        else:
+            # Fall back to V1 threshold (8)
+            if known_count == hand_size and my_expected < 8:
+                return True
+
+        # Preemptive call: if we detect opponent is ready to call,
+        # call first ONLY if we have strong margin (ablation-gated)
+        if self.use_preemptive_cambio:
+            for name in self.tracker.opponent_hand_sizes:
+                opp_knowledge = self.tracker.get_opponent_self_knowledge(name)
+                opp_hand_size = self.tracker.opponent_hand_sizes[name]
+                # Opponent knows all or nearly all their cards
+                if len(opp_knowledge) >= opp_hand_size:
+                    opp_expected = self._get_opponent_expected(name)
+                    # Only preempt with strong advantage and high confidence
+                    if (known_count >= hand_size - self.cambio_knowledge_gap
+                            and my_expected < self.cambio_threshold
+                            and my_expected < opp_expected - 2):
+                        return True
+
+        # Scale margin for V1's cambio logic based on opponent count
+        original_margin = self.cambio_margin
+        self.cambio_margin = self.cambio_margin + opp_scaling
+        result = super().call_cambio()
+        self.cambio_margin = original_margin
+        return result
+
+    def _get_opponent_expected(self, name):
+        """Get opponent expected score, using inference if enabled."""
+        if self.use_opponent_inference:
+            return self.tracker.expected_opponent_score_with_inference(name)
+        return self.tracker.expected_opponent_score(name)
 
     # ------------------------------------------------------------------
     # Enhanced swap targeting with disruption scoring (Priority 3: scaled bonus)
@@ -208,6 +532,10 @@ class BayesianV2Agent(BayesianAgent):
         The disruption bonus is scaled by number of opponents: full bonus with 2+,
         reduced to 1 in 1v1 so card value dominates the decision.
         """
+        # When disruption scoring is disabled, fall back to V1 behavior
+        if not self.use_disruption_scoring:
+            return super()._find_best_swap_target(opponents)
+
         best_opp = None
         best_pos = None
         best_score = float('-inf')
@@ -215,9 +543,9 @@ class BayesianV2Agent(BayesianAgent):
         # Scale disruption bonus: full (3) with 2+ opponents, 1 in 1v1
         num_opponents = len(opponents)
         if num_opponents >= 2:
-            disruption_bonus = DISRUPTION_BONUS_MAX
+            disruption_bonus = self.disruption_bonus_max
         else:
-            disruption_bonus = min(1, DISRUPTION_BONUS_MAX)
+            disruption_bonus = min(1, self.disruption_bonus_max)
 
         for opp in opponents:
             if opp.name not in self.tracker.opponent_hands:
@@ -290,7 +618,10 @@ class BayesianV2Agent(BayesianAgent):
             return super().choose_power_action(card, game, opponents)
 
         elif card.rank in ['9', '10']:
-            return self._choose_peek_opponent_action(card, game, opponents)
+            if self.use_smart_peek:
+                return self._choose_peek_opponent_action(card, game, opponents)
+            else:
+                return super().choose_power_action(card, game, opponents)
 
         elif card.rank in ['J', 'Q']:
             return self._choose_jq_action(card, game, opponents)
@@ -337,13 +668,12 @@ class BayesianV2Agent(BayesianAgent):
         if not unknown_pos:
             return None
 
-        # Weight unknown positions: prefer positions more likely to hold low cards.
-        # In practice, all unknown positions have the same distribution (unaccounted),
-        # but positions adjacent to known-low cards or earlier positions (which
-        # players tend to peek first) are slightly more likely to be kept low.
-        # Use a simple heuristic: prefer positions not yet examined (truly unknown),
-        # and among those, prefer lower indices (dealt first, often peeked/managed).
-        target_pos = min(unknown_pos)
+        # Prefer positions the opponent does NOT know about (unmanaged positions).
+        # These are more likely to hold high-value unswapped cards, giving us
+        # more useful intel for future swap decisions.
+        opp_knowledge = self.tracker.get_opponent_self_knowledge(best_opp.name)
+        unmanaged = [p for p in unknown_pos if p not in opp_knowledge]
+        target_pos = min(unmanaged) if unmanaged else min(unknown_pos)
 
         return {'type': 'peek_opponent', 'opponent': best_opp, 'position': target_pos}
 
@@ -372,7 +702,7 @@ class BayesianV2Agent(BayesianAgent):
                     if target_card is not None:
                         target_val = tuple_value(target_card[0], target_card[1])
                         # Swap if we'd improve our hand by at least 2 points
-                        if worst_val - target_val >= 2:
+                        if worst_val - target_val >= self.jq_swap_improvement:
                             return {
                                 'type': 'blind_swap',
                                 'my_position': worst_pos,
@@ -401,29 +731,25 @@ class BayesianV2Agent(BayesianAgent):
                             'opp_position': opp_pos,
                         }
 
-                # Path 1c: In 1v1, use J/Q to swap moderately bad cards
-                # (value >= 5) with unknown opponent positions. This gamble
-                # has positive EV when our card is above average.
-                if len(opponents) == 1 and worst_val >= 5:
-                    opp = opponents[0]
-                    unknown_opp = self.tracker.opponent_unknown_positions(opp.name)
-                    if unknown_opp and opp.hand:
-                        opp_pos = min(unknown_opp)  # Prefer lower positions
-                        if opp_pos < len(opp.hand):
-                            return {
-                                'type': 'blind_swap',
-                                'my_position': worst_pos,
-                                'opponent': opp,
-                                'opp_position': opp_pos,
-                            }
 
-        # Path 2: Disruption swap if hand is already good (multi-player only)
+        # Path 2: Disruption swap if hand is already good AND we're winning (multi-player only)
+        if not self.use_third_party_swaps:
+            return None
+
         if worst is not None:
             _, worst_val = worst
         else:
             worst_val = e_unknown
 
-        if worst_val <= GOOD_HAND_THRESHOLD and len(opponents) >= 2:
+        if worst_val <= self.good_hand_threshold and len(opponents) >= 2:
+            # Only disrupt if we're actually ahead — no point sabotaging when losing
+            my_expected = self.tracker.expected_own_score()
+            best_opp_expected = min(
+                self.tracker.expected_opponent_score(o.name) for o in opponents
+            )
+            if my_expected > best_opp_expected:
+                return None  # We're behind; disruption won't help
+
             disruption = self._find_best_disruption_swap(opponents)
             if disruption:
                 opp1, pos1, opp2, pos2 = disruption
@@ -454,7 +780,7 @@ class BayesianV2Agent(BayesianAgent):
             worst_val = e_unknown
 
         # Determine if hand is strong (disruption mode) or needs improvement (info mode)
-        hand_is_strong = worst_val <= GOOD_HAND_THRESHOLD
+        hand_is_strong = worst_val <= self.good_hand_threshold
 
         if hand_is_strong and len(opponents) >= 2:
             # Disruption mode: peek for intel, then swap two opponents' known positions

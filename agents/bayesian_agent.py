@@ -164,8 +164,10 @@ class BayesianAgent(Player):
         # Joker (0) or Red King (-1) are always worth taking
         if discard_value <= 0:
             return 'discard'
-        # Otherwise require a large improvement
-        if best_improvement >= 3:
+        # Otherwise require meaningful improvement (≥1 accounts for lost
+        # optionality of drawing from deck, which lets you discard and
+        # potentially trigger a power card)
+        if best_improvement >= 1:
             return 'discard'
 
         return 'deck'

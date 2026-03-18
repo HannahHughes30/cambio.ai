@@ -279,3 +279,92 @@ class CardTracker:
     def get_opponent_self_knowledge(self, name):
         """Return the set of positions an opponent likely knows."""
         return self.opponent_self_knowledge.get(name, set())
+
+    # ------------------------------------------------------------------
+    # Opponent action inference
+    # ------------------------------------------------------------------
+
+    def set_opponent_hand_upper_bound(self, name, value):
+        """Record that all of an opponent's cards are likely <= value.
+
+        Inferred when an opponent draws from deck and discards (doesn't swap):
+        they chose not to swap, so all their cards are at most as good as the
+        discarded card's value.
+        """
+        if not hasattr(self, '_opponent_hand_upper_bounds'):
+            self._opponent_hand_upper_bounds = {}
+        # Only tighten (lower) the bound, never loosen
+        if name not in self._opponent_hand_upper_bounds or value < self._opponent_hand_upper_bounds[name]:
+            self._opponent_hand_upper_bounds[name] = value
+
+    def get_opponent_hand_upper_bound(self, name):
+        """Return the upper bound on an opponent's hand values, or None."""
+        if not hasattr(self, '_opponent_hand_upper_bounds'):
+            self._opponent_hand_upper_bounds = {}
+        return self._opponent_hand_upper_bounds.get(name)
+
+    def add_opponent_peeked_and_kept(self, name, pos):
+        """Record that an opponent peeked their own card at pos and kept it."""
+        if not hasattr(self, '_opponent_peeked_and_kept'):
+            self._opponent_peeked_and_kept = {}
+        if name not in self._opponent_peeked_and_kept:
+            self._opponent_peeked_and_kept[name] = set()
+        self._opponent_peeked_and_kept[name].add(pos)
+
+    def get_opponent_peeked_and_kept(self, name):
+        """Return set of positions opponent peeked and kept."""
+        if not hasattr(self, '_opponent_peeked_and_kept'):
+            self._opponent_peeked_and_kept = {}
+        return self._opponent_peeked_and_kept.get(name, set())
+
+    def expected_opponent_value_at_position(self, name, pos):
+        """EV for a specific opponent position, using inference priors.
+
+        Returns:
+        - Known card value if position is known
+        - Lower-than-average EV if position was peeked-and-kept
+        - Upper-bounded EV if hand upper bound exists
+        - Default E[unknown] otherwise
+        """
+        # Known card — exact value
+        if name in self.opponent_hands:
+            card = self.opponent_hands[name].get(pos)
+            if card is not None:
+                return tuple_value(card[0], card[1])
+
+        unaccounted = self.unaccounted_cards()
+        if not unaccounted:
+            return 5.0
+
+        # Peeked-and-kept: opponent saw this card and chose to keep it,
+        # implying it's likely low. Filter to cards <= median value.
+        peeked_kept = self.get_opponent_peeked_and_kept(name)
+        upper_bound = self.get_opponent_hand_upper_bound(name)
+
+        if pos in peeked_kept:
+            # Weight toward low cards: filter to bottom half of unaccounted
+            values = sorted(tuple_value(r, s) for r, s in unaccounted)
+            median_val = values[len(values) // 2] if values else 5
+            low_cards = [(r, s) for r, s in unaccounted if tuple_value(r, s) <= median_val]
+            if low_cards:
+                return sum(tuple_value(r, s) for r, s in low_cards) / len(low_cards)
+
+        if upper_bound is not None:
+            # Filter unaccounted to cards <= upper bound
+            bounded = [(r, s) for r, s in unaccounted if tuple_value(r, s) <= upper_bound]
+            if bounded:
+                return sum(tuple_value(r, s) for r, s in bounded) / len(bounded)
+
+        return self.expected_value_of_unknown()
+
+    def expected_opponent_score_with_inference(self, name):
+        """Like expected_opponent_score but uses inference priors."""
+        if name not in self.opponent_hands:
+            hand_size = self.opponent_hand_sizes.get(name, 4)
+            return hand_size * self.expected_value_of_unknown()
+
+        hand_size = self.opponent_hand_sizes.get(name, 4)
+        total = 0.0
+        for pos in range(hand_size):
+            total += self.expected_opponent_value_at_position(name, pos)
+        return total
