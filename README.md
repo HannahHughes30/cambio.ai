@@ -19,10 +19,10 @@ This is a project for CSC 480 at Cal Poly, instructed by Dr. Rodrigo Canaan.
 - R. Sutton and A. Barto, Reinforcement Learning: An Introduction, 2nd ed. MIT Press, 2018.
 
 ## Project Structure
-- `game/` - Game simulator
 - `agents/` - AI agent implementations
 - `tests/` - Unit tests
 - `scenarios/` - Graphs and Tables
+- `web/` - Web-based interface
 
 ## Setup
 ```bash
